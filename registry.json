@@ -1,0 +1,159 @@
+{
+  "version": "1.0.0",
+  "subject": "bicycle maintenance",
+  "note": "A deliberately small, neutral registry. The point of this repository is the routing and quality machinery, not the domain content.",
+  "domains": [
+    {
+      "id": "drivetrain",
+      "owner": "Drivetrain specialist",
+      "match": ["chain", "cassette", "derailleur", "shifting", "shift", "crank", "chainring", "bottom bracket", "gear", "skipping"],
+      "requires": ["drivetrain_speeds"],
+      "claims": [
+        {
+          "topic": "chain wear",
+          "statement": "Replace the chain once elongation reaches 0.5% on an 11- or 12-speed drivetrain; waiting until 0.75% usually means replacing the cassette as well.",
+          "confidence": "SUPPORTED",
+          "source": "Chain manufacturer wear-limit specifications"
+        },
+        {
+          "topic": "skipping under load",
+          "statement": "Skipping only under load, with clean indexing at rest, points to a worn cassette rather than to cable tension.",
+          "confidence": "SUPPORTED",
+          "source": "Standard workshop diagnostic sequence"
+        },
+        {
+          "topic": "chain lubricant choice",
+          "statement": "Wax-based lubricants are widely reported to extend chain life relative to wet lubricants in dry conditions, but published comparisons vary in method and the size of the effect is disputed.",
+          "confidence": "MIXED",
+          "source": "Independent lubricant test programmes, methods not harmonised"
+        }
+      ]
+    },
+    {
+      "id": "brakes",
+      "owner": "Brake specialist",
+      "match": ["brake", "braking", "rotor", "pad", "caliper", "hydraulic", "bleed", "rim brake", "disc"],
+      "requires": ["brake_type"],
+      "claims": [
+        {
+          "topic": "contaminated pads",
+          "statement": "Pads contaminated with oil cannot be reliably cleaned; replace them and clean the rotor with isopropyl alcohol.",
+          "confidence": "SUPPORTED",
+          "source": "Brake manufacturer service documentation"
+        },
+        {
+          "topic": "lever feel",
+          "statement": "A lever that firms up after several pumps indicates air in a hydraulic system and calls for a bleed.",
+          "confidence": "SUPPORTED",
+          "source": "Standard hydraulic diagnostic"
+        },
+        {
+          "topic": "rotor truing by hand",
+          "statement": "Straightening a warped rotor by hand is widely practised and sometimes effective, but it is not a specified repair and results are inconsistent.",
+          "confidence": "FOLKLORE",
+          "source": "Workshop practice, no manufacturer procedure"
+        }
+      ]
+    },
+    {
+      "id": "wheels_tyres",
+      "owner": "Wheel and tyre specialist",
+      "match": ["tyre", "tire", "wheel", "spoke", "rim", "tubeless", "puncture", "pressure", "psi", "bar", "truing", "hub"],
+      "requires": ["rider_weight_kg", "tyre_width_mm"],
+      "claims": [
+        {
+          "topic": "pressure selection",
+          "statement": "Correct pressure is a function of rider plus bike mass, tyre width and surface; it cannot be given as a single number without those inputs.",
+          "confidence": "SUPPORTED",
+          "source": "Tyre pressure models published by tyre manufacturers"
+        },
+        {
+          "topic": "sealant service life",
+          "statement": "Tubeless sealant dries out and needs topping up on a schedule that depends on climate and casing porosity.",
+          "confidence": "SUPPORTED",
+          "source": "Sealant manufacturer guidance"
+        },
+        {
+          "topic": "lower pressure is always faster",
+          "statement": "Lower pressure is often described as universally faster; in practice there is an optimum below which rolling resistance rises again.",
+          "confidence": "MIXED",
+          "source": "Rolling-resistance studies, surface-dependent"
+        }
+      ]
+    },
+    {
+      "id": "fit",
+      "owner": "Fit specialist",
+      "match": ["saddle", "fit", "position", "knee", "reach", "stem", "handlebar", "seat height", "cleat", "comfort", "numbness"],
+      "requires": ["inseam_cm", "riding_discipline"],
+      "claims": [
+        {
+          "topic": "saddle height",
+          "statement": "Saddle height set from inseam gives a starting point only; final height is confirmed by observed knee angle at the bottom of the stroke.",
+          "confidence": "SUPPORTED",
+          "source": "Bike-fit literature"
+        },
+        {
+          "topic": "numbness",
+          "statement": "Persistent numbness is a fit and pressure-distribution problem, not a saddle-padding problem, and softer saddles frequently make it worse.",
+          "confidence": "SUPPORTED",
+          "source": "Pressure-mapping studies"
+        }
+      ]
+    },
+    {
+      "id": "ebike",
+      "owner": "Electric drive specialist",
+      "match": ["ebike", "e-bike", "motor", "battery", "charge", "range", "controller", "watt", "assist"],
+      "requires": ["battery_capacity_wh", "system_voltage"],
+      "claims": [
+        {
+          "topic": "range estimation",
+          "statement": "Range is capacity divided by average consumption; consumption depends on assist level, gradient, mass and wind, so a range figure without those assumptions is not meaningful.",
+          "confidence": "SUPPORTED",
+          "source": "Energy balance"
+        },
+        {
+          "topic": "storage charge",
+          "statement": "Lithium packs stored for long periods keep capacity better at a partial state of charge than at full or empty.",
+          "confidence": "SUPPORTED",
+          "source": "Cell manufacturer storage guidance"
+        }
+      ]
+    },
+    {
+      "id": "frame",
+      "owner": "Frame and materials specialist",
+      "match": ["frame", "carbon", "aluminium", "aluminum", "steel", "titanium", "crack", "torque", "creak", "headset", "alignment"],
+      "requires": ["frame_material"],
+      "claims": [
+        {
+          "topic": "carbon inspection",
+          "statement": "Suspected carbon damage is assessed by ultrasound or tap testing; visual inspection alone does not clear a frame after an impact.",
+          "confidence": "SUPPORTED",
+          "source": "Composite inspection practice"
+        },
+        {
+          "topic": "creaking source",
+          "statement": "A creak reported as coming from the bottom bracket originates elsewhere often enough that the diagnostic sequence should not start there.",
+          "confidence": "MIXED",
+          "source": "Workshop experience, not systematically measured"
+        }
+      ]
+    },
+    {
+      "id": "tools",
+      "owner": "Workshop and tooling specialist",
+      "match": ["tool", "torque wrench", "workshop", "stand", "spanner", "hex", "newton", "nm", "grease", "threadlock"],
+      "requires": [],
+      "claims": [
+        {
+          "topic": "torque values",
+          "statement": "Fasteners on carbon interfaces are torqued to the component maker's figure with a calibrated wrench; feel is not an acceptable substitute.",
+          "confidence": "SUPPORTED",
+          "source": "Component manufacturer torque specifications"
+        }
+      ]
+    }
+  ]
+}

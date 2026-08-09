@@ -1,0 +1,91 @@
+Registry: bicycle maintenance, version 1.0.0, 7 domains
+
+========================================================================
+Case 1 — a clean route with all inputs present
+========================================================================
+Q: My chain skips under load but shifting is fine when I am freewheeling.
+
+ROUTE
+  drivetrain (score 2) matched on: chain, shifting
+
+GATE PASSED — all required values present.
+
+Q: My chain skips under load but shifting is fine when I am freewheeling.
+
+— Drivetrain specialist [drivetrain]
+  Replace the chain once elongation reaches 0.5% on an 11- or 12-speed drivetrain; waiting until 0.75% usually means replacing the cassette as well.
+    confidence: SUPPORTED (supported by published sources)
+    source: Chain manufacturer wear-limit specifications
+  Skipping only under load, with clean indexing at rest, points to a worn cassette rather than to cable tension.
+    confidence: SUPPORTED (supported by published sources)
+    source: Standard workshop diagnostic sequence
+  Wax-based lubricants are widely reported to extend chain life relative to wet lubricants in dry conditions, but published comparisons vary in method and the size of the effect is disputed.
+    confidence: MIXED (contested — evidence points both ways)
+    source: Independent lubricant test programmes, methods not harmonised
+
+Answered by: Drivetrain specialist
+
+========================================================================
+Case 2 — the gate halts and names what is missing
+========================================================================
+Q: What tyre pressure should I run?
+
+ROUTE
+  wheels_tyres (score 2) matched on: pressure, tyre
+
+GATE HALTED — the run cannot continue. Missing values:
+  - rider_weight_kg  (required by: wheels_tyres)
+
+Supply these and re-run. No figure is produced without them.
+
+
+========================================================================
+Case 3 — two disciplines, each signed separately
+========================================================================
+Q: The brake lever feels spongy and the rear wheel has a loose spoke.
+
+ROUTE
+  wheels_tyres (score 2) matched on: spoke, wheel
+  brakes (score 1) matched on: brake
+
+GATE PASSED — all required values present.
+
+Q: The brake lever feels spongy and the rear wheel has a loose spoke.
+
+— Wheel and tyre specialist [wheels_tyres]
+  Correct pressure is a function of rider plus bike mass, tyre width and surface; it cannot be given as a single number without those inputs.
+    confidence: SUPPORTED (supported by published sources)
+    source: Tyre pressure models published by tyre manufacturers
+  Tubeless sealant dries out and needs topping up on a schedule that depends on climate and casing porosity.
+    confidence: SUPPORTED (supported by published sources)
+    source: Sealant manufacturer guidance
+  Lower pressure is often described as universally faster; in practice there is an optimum below which rolling resistance rises again.
+    confidence: MIXED (contested — evidence points both ways)
+    source: Rolling-resistance studies, surface-dependent
+
+— Brake specialist [brakes]
+  Pads contaminated with oil cannot be reliably cleaned; replace them and clean the rotor with isopropyl alcohol.
+    confidence: SUPPORTED (supported by published sources)
+    source: Brake manufacturer service documentation
+  A lever that firms up after several pumps indicates air in a hydraulic system and calls for a bleed.
+    confidence: SUPPORTED (supported by published sources)
+    source: Standard hydraulic diagnostic
+  Straightening a warped rotor by hand is widely practised and sometimes effective, but it is not a specified repair and results are inconsistent.
+    confidence: FOLKLORE (traditional practice, not established)
+    source: Workshop practice, no manufacturer procedure
+
+Answered by: Wheel and tyre specialist, Brake specialist
+
+========================================================================
+Case 4 — out of scope, and the system says so
+========================================================================
+Q: Which route should I ride through the Carpathians in October?
+
+ROUTE
+  (no domain matched)
+
+Q: Which route should I ride through the Carpathians in October?
+
+OUT OF SCOPE — no discipline in this registry covers the question.
+Flagged for external sourcing rather than answered. An answer would have to come from outside the system, with a source and a date.
+
