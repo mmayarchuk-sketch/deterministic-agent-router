@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "action": {"enum": ["reply", "escalate"]},
+    "kind": {"enum": ["technical_analysis", "authorized_action", "owner_decision", "authority_conflict", "material_risk"]},
+    "subject": {"type": "string", "minLength": 1, "maxLength": 300},
+    "body": {"type": "string", "minLength": 1, "maxLength": 50000},
+    "authority_ids": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^(D|F)(-CODEX)?-[0-9]{4}$"}
+    },
+    "requires_external_action": {"type": "boolean"},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 2000}
+  },
+  "required": ["action", "kind", "subject", "body", "authority_ids", "requires_external_action", "reason"],
+  "additionalProperties": false
+}

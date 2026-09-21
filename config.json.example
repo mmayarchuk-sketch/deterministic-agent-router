@@ -1,0 +1,8 @@
+{
+  "claude_binary": "@ДОМ@/.local/bin/claude",
+  "max_timeout_seconds": 1800,
+  "projects": {
+    "uae-land": "@ДОМ@/Documents/BioSingularity/AI Corporate",
+    "astra-land": "@ДОМ@/Documents/BioSingularity/AI Corporate/AstraLand"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "actor": "codex-mailroom",
+  "mode": "production",
+  "codex_binary": "/Applications/ChatGPT.app/Contents/Resources/codex",
+  "state_directory": "@ДОМ@/Documents/BioSingularity/AI Corporate/agent-dispatcher/state/mailroom",
+  "owner_outbox": "@ДОМ@/Documents/BioSingularity/AI Corporate/agent-dispatcher/mail/owner-outbox",
+  "owner_archive": "@ДОМ@/Documents/BioSingularity/AI Corporate/agent-dispatcher/mail/owner-archive",
+  "working_directory": "@ДОМ@/Documents/BioSingularity/AI Corporate/agent-dispatcher",
+  "thread_id": "@ВАШ_THREAD_ID@",
+  "codex_home": "@ДОМ@/.codex",
+  "validate_thread": true,
+  "ack_deadline_seconds": 7200,
+  "memory_digests": [
+    "@ДОМ@/.codex/coordination-memory/DIGEST.md",
+    "@ДОМ@/.codex/grow365-memory-state/DIGEST.md"
+  ],
+  "policy": "@ДОМ@/Documents/BioSingularity/AI Corporate/agent-dispatcher/mailroom-policy.json",
+  "lease_seconds": 1800,
+  "timeout_seconds": 600,
+  "path": "/opt/homebrew/bin:@ДОМ@/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+}

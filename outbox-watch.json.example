@@ -1,0 +1,9 @@
+{
+  "outbox": "@ДОМ@/Documents/BioSingularity/AI Corporate/agent-dispatcher/mail/outbox",
+  "state_directory": "@ДОМ@/Documents/BioSingularity/AI Corporate/agent-dispatcher/state/outbox-watch",
+  "thread_id": "@ВАШ_THREAD_ID@",
+  "codex_binary": "/Applications/ChatGPT.app/Contents/Resources/codex",
+  "path": "/opt/homebrew/bin:@ДОМ@/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+  "codex_home": "@ДОМ@/.codex",
+  "validate_thread": true
+}

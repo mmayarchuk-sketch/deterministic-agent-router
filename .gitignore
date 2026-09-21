@@ -1,0 +1,31 @@
+# Рабочее состояние и окружение
+.venv/
+venv/
+__pycache__/
+*.pyc
+state/
+*.tmp
+
+# Почтовые ящики и всё, что в них живёт: это данные, не код
+mail/inbox/
+mail/outbox/
+mail/archive/
+mail/attachments/
+mail/receipts/
+mail/owner-outbox/
+mail/owner-archive/
+mail/.transport.lock
+mail/.outgoing-index.json
+mail/.claims.json
+mail-cowork/inbox/
+
+# Настройки этой машины: в истории живут только образцы *.example
+config.json
+mailroom.json
+outbox-watch.json
+
+# Замок единственного писателя: состояние процесса, а не код
+.worktree.lock
+
+# Мусор системы
+.DS_Store

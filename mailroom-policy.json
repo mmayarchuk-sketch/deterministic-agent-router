@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "owner_decision": "D-CODEX-0007",
+  "allowed_without_authority": [
+    "read mailbox content",
+    "perform read-only technical analysis",
+    "send a clearly non-binding technical recommendation",
+    "archive after a durable reply or escalation"
+  ],
+  "authority_required": [
+    "state that an action is authorized",
+    "recommend executing an already authorized external action",
+    "change state outside the mailbox"
+  ],
+  "always_escalate": [
+    "new owner decision",
+    "authority conflict",
+    "material risk without an accepted disposition",
+    "push, rollout, publication, or communication to a human",
+    "missing applicable authority record"
+  ],
+  "forbidden": [
+    "push",
+    "rollout",
+    "deployment",
+    "publication",
+    "messages to humans",
+    "destructive filesystem or cloud changes"
+  ]
+}
