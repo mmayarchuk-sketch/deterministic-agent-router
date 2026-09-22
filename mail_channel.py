@@ -176,6 +176,36 @@ def notify_codex(subject, body, request_id, needs_reply=True, reply_to='-'):
                     needs_reply, reply_to)
 
 
+def local_delivery_record(name, expected_sha256, request_id, *, mailbox='outbox'):
+    """Запись НАШЕГО журнала исходящих об этом точном письме, или None.
+
+    Заявление письма о себе ничего не доказывает: признак автомата в
+    идентификаторе может поставить любой доверенный отправитель, и письмо,
+    которое ждало ответа, молча уедет в архив как «автоответ». Доказывает
+    только след транспорта — журнал того обработчика, который письмо создал,
+    и совпадение имени и полного SHA содержимого.
+    """
+    _mailbox(mailbox)
+    if not request_id or not name:
+        return None
+    index_path = MAIL / OUTGOING_INDEX[mailbox]
+    if not index_path.exists():
+        return None
+    try:
+        index = json.loads(index_path.read_text())
+    except (ValueError, OSError):
+        return None
+    record = index.get(request_id)
+    if not isinstance(record, dict) or record.get('name') != name:
+        return None
+    содержимое = record.get('content')
+    if not isinstance(содержимое, str):
+        return None
+    if hashlib.sha256(содержимое.encode('utf-8')).hexdigest() != expected_sha256:
+        return None
+    return record
+
+
 def read_replies(limit=20, max_chars=100000, *, mailbox='outbox'):
     """Read complete messages within a total budget; never archive implicitly."""
     _mailbox(mailbox)

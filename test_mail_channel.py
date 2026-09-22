@@ -324,5 +324,39 @@ class MailTests(unittest.TestCase):
         self.assertEqual(list((m.MAIL / 'inbox').glob('*.md')), [])
 
 
+    def test_local_delivery_record_proves_only_an_exact_letter(self):
+        sent = m.notify_claude('Тема', 'Тело', 'mailroom-' + 'a' * 24)
+        sha = m.read_reply(sent['name'], mailbox='inbox')['sha256']
+        найдено = m.local_delivery_record(sent['name'], sha,
+                                          'mailroom-' + 'a' * 24, mailbox='inbox')
+        self.assertIsNotNone(найдено)
+        self.assertIsNone(m.local_delivery_record(sent['name'], sha, 'mailroom-'
+                                                  + 'z' * 24, mailbox='inbox'))
+        self.assertIsNone(m.local_delivery_record('other.md', sha, 'mailroom-'
+                                                  + 'a' * 24, mailbox='inbox'))
+        self.assertIsNone(m.local_delivery_record(sent['name'], 'f' * 64,
+                                                  'mailroom-' + 'a' * 24,
+                                                  mailbox='inbox'))
+        # журнал ящика раздельный: то же письмо по outbox не подтверждается
+        self.assertIsNone(m.local_delivery_record(sent['name'], sha, 'mailroom-'
+                                                  + 'a' * 24, mailbox='outbox'))
+        with self.assertRaises(ValueError):
+            m.local_delivery_record(sent['name'], sha, 'x', mailbox='elsewhere')
+
+
+    def test_letters_are_written_whole_or_not_at_all(self):
+        import write_letter
+        with self.assertRaises(ValueError):
+            write_letter.write('outbox', 'b999', 'Тема', '   \n  ')
+        self.assertEqual(list((m.MAIL / 'outbox').glob('*.md')), [])
+        путь = write_letter.write('outbox', 'b999', 'Тема', 'Тело письма')
+        текст = путь.read_text(encoding='utf-8')
+        self.assertTrue(текст.startswith('---\n'))
+        self.assertIn('from: "claude"', текст)
+        self.assertTrue(текст.split('\n---\n', 1)[1].strip())
+        with self.assertRaises(ValueError):
+            write_letter.write('elsewhere', 'b998', 'Тема', 'Тело')
+
+
 if __name__ == '__main__':
     unittest.main()

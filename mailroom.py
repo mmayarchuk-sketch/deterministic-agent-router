@@ -28,8 +28,11 @@ DEFAULT_CONFIG = BASE / 'mailroom.json'
 # Ответ уходит в ящик, которого этот проход не читает.
 REPLY_MAILBOX = {'outbox': 'inbox', 'inbox': 'outbox'}
 DELIVER = {'inbox': 'notify_claude', 'outbox': 'notify_codex'}
-# Письмо с таким идентификатором произвёл автомат: отвечать на него не нужно.
+# Письмо с таким идентификатором ПОХОЖЕ на произведённое автоматом. Похоже —
+# не значит произведённое: префикс ставит отправитель, а не транспорт.
 AUTO_PREFIXES = ('mailroom-', 'mirror-')
+# Кто пишет в этот ящик по устройству канала: отправитель, получатель.
+DIRECTION = {'inbox': ('codex', 'claude'), 'outbox': ('claude', 'codex')}
 
 
 class MailroomFailure(RuntimeError):
@@ -63,6 +66,26 @@ def letter_header(text):
         if match:
             fields[match.group(1)] = match.group(2).strip('"')
     return fields
+
+
+def неполное_письмо(text):
+    """Причина, по которой это не готовое письмо, или None.
+
+    22.09.2026 моё же письмо ушло к рецензенту одной шапкой: я писала файл в
+    два приёма, а съёмщик забрал его между ними. Проверка устойчивости у него
+    честная, но между двумя командами файл был устойчив по-настоящему — в нём
+    просто не было тела. Письмо без тела разбирать нечего и archive нечего.
+    Текст без шапки вовсе — не этот случай: так выглядят старые письма.
+    """
+    if not text.startswith('---'):
+        return None
+    if '\n---' not in text:
+        return 'шапка не закрыта разделителем: запись оборвана'
+    тело = text.split('\n---', 1)[1]
+    тело = тело[3:] if тело.startswith('---') else тело
+    if not тело.strip():
+        return 'после шапки нет тела: письмо записано не целиком'
+    return None
 
 
 def gate(cfg, mailbox):
@@ -195,6 +218,12 @@ def run(cfg, classifier=None, now=None):
     key = channel._claim_key(source_mailbox, msg['name'], msg['sha256'])
     request_id = request_id_for(source_mailbox, key)
     try:
+        обрыв = неполное_письмо(claim['text'])
+        if обрыв:
+            channel.release_claim(msg['name'], msg['sha256'], claim['token'],
+                                  mailbox=source_mailbox)
+            return {'status': 'refused_malformed_letter', 'name': msg['name'],
+                    'mailbox': source_mailbox, 'reason': обрыв}
         header = letter_header(claim['text'])
         if senders is not None and header.get('from') not in senders:
             channel.release_claim(msg['name'], msg['sha256'], claim['token'],
@@ -219,7 +248,26 @@ def run(cfg, classifier=None, now=None):
 
         # Письмо автомата ответа не требует: иначе два прохода отвечают друг
         # другу бесконечно. Исход всё равно фиксируется — письмо прочитано.
+        # Но «письмо автомата» доказывается СЛЕДОМ ТРАНСПОРТА, а не шапкой:
+        # префикс в идентификаторе ставит отправитель, и доверенный коллега
+        # мог бы им заглушить собственное письмо, ждущее ответа (замечание
+        # Астры по B082, пункт е). Нужны запись нашего журнала исходящих про
+        # это точное имя и содержимое И совпадение направления с ящиком.
         if header.get('id', '').startswith(auto_prefixes):
+            след = channel.local_delivery_record(msg['name'], msg['sha256'],
+                                                 header.get('id'),
+                                                 mailbox=source_mailbox)
+            ожидаем = DIRECTION[source_mailbox]
+            направление = (header.get('from'), header.get('to'))
+            if след is None or направление != ожидаем:
+                channel.release_claim(msg['name'], msg['sha256'], claim['token'],
+                                      mailbox=source_mailbox)
+                return {'status': 'refused_forged_auto_id', 'name': msg['name'],
+                        'mailbox': source_mailbox, 'id': header.get('id'),
+                        'reason': ('признак автомата не подтверждён журналом '
+                                   'исходящих' if след is None else
+                                   'направление %r не совпадает с ящиком %r'
+                                   % (направление, source_mailbox))}
             if cfg.get('mode') == 'shadow':
                 channel.release_claim(msg['name'], msg['sha256'], claim['token'],
                                       mailbox=source_mailbox)

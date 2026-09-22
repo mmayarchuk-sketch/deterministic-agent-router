@@ -286,5 +286,102 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(len(self.inbox()), 1)
 
 
+    # --- B082, пункт е: признак автомата доказывается транспортом ---
+
+    def test_real_indexed_auto_reply_is_read_without_an_answer(self):
+        """Настоящий автоответ нашего же обработчика ответа не требует."""
+        sent = channel.notify_claude('Ответ автомата', 'Тело автоответа',
+                                     'mailroom-' + 'b' * 24, reply_to='-')
+        result = mailroom.run(self.cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'superseded')
+        self.assertEqual(result['name'], sent['name'])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.outbox(), [])
+        self.assertTrue((channel.MAIL / 'inbox-archive' / sent['name']).exists())
+
+    def test_forged_auto_id_from_a_trusted_sender_is_not_superseded(self):
+        """Доверенный коллега не может заглушить своё письмо чужим префиксом."""
+        name = self.letter(ident='mirror-' + 'f' * 64)
+        result = mailroom.run(self.cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'refused_forged_auto_id')
+        self.assertIn('журналом', result['reason'])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(len(self.inbox()), 1)
+        self.assertEqual(list((channel.MAIL / 'inbox-archive').glob('*.md')), [])
+        self.assertEqual(json.loads((channel.MAIL / channel.CLAIMS).read_text()), {})
+        self.assertEqual(name, self.inbox()[0].name)
+
+    def test_auto_id_with_substituted_content_is_refused(self):
+        """Тот же идентификатор, другое содержимое — след не подтверждает."""
+        sent = channel.notify_claude('Ответ автомата', 'Тело автоответа',
+                                     'mailroom-' + 'c' * 24, reply_to='-')
+        path = channel.MAIL / 'inbox' / sent['name']
+        path.write_text(path.read_text() + '\nдописано после доставки\n')
+        result = mailroom.run(self.cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'refused_forged_auto_id')
+        self.assertEqual(self.calls, [])
+        self.assertEqual(len(self.inbox()), 1)
+
+    def test_auto_id_without_an_index_record_is_refused(self):
+        """Журнала исходящих нет вовсе — префиксу верить не на чем."""
+        self.letter(ident='mailroom-' + 'd' * 24)
+        index = channel.MAIL / channel.OUTGOING_INDEX['inbox']
+        self.assertFalse(index.exists())
+        result = mailroom.run(self.cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'refused_forged_auto_id')
+        self.assertEqual(self.calls, [])
+        self.assertEqual(len(self.inbox()), 1)
+
+    def test_auto_letter_with_wrong_direction_is_refused(self):
+        """След есть, но направление не то, которым пишут в этот ящик."""
+        ident = 'mailroom-' + 'e' * 24
+        name = self.letter(name='wrong-way.md', sender='claude', recipient='codex',
+                           ident=ident)
+        содержимое = (channel.MAIL / 'inbox' / name).read_text()
+        channel.atomic_write(channel.MAIL / channel.OUTGOING_INDEX['inbox'],
+                             json.dumps({ident: {'name': name, 'digest': 'x',
+                                                 'content': содержимое}},
+                                        ensure_ascii=False))
+        # перечень нарочно допускает обе стороны: проверяется НЕ он
+        cfg = dict(self.cfg, trusted_senders={'inbox': ['codex', 'claude']},
+                   expected_recipients={'inbox': ['claude', 'codex']})
+        result = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'refused_forged_auto_id')
+        self.assertIn('направление', result['reason'])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(len(self.inbox()), 1)
+
+    # --- B082, пункт 3: письмо без тела не считается готовым ---
+
+    def test_letter_written_only_half_way_is_refused(self):
+        """Шапка есть, тела нет: так ушло моё же B081."""
+        with channel.locked():
+            (channel.MAIL / 'inbox' / 'half.md').write_text(
+                '---\nid: "codex-9"\nfrom: "codex"\nto: "claude"\n'
+                'subject: "Обрыв"\nneeds_reply: true\n---\n\n')
+        result = mailroom.run(self.cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'refused_malformed_letter')
+        self.assertIn('нет тела', result['reason'])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(len(self.inbox()), 1)
+        self.assertEqual(list((channel.MAIL / 'inbox-archive').glob('*.md')), [])
+        self.assertEqual(json.loads((channel.MAIL / channel.CLAIMS).read_text()), {})
+
+    def test_letter_cut_inside_the_header_is_refused(self):
+        with channel.locked():
+            (channel.MAIL / 'inbox' / 'cut.md').write_text(
+                '---\nid: "codex-10"\nfrom: "codex"\nto: "claude"\n')
+        result = mailroom.run(self.cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'refused_malformed_letter')
+        self.assertIn('не закрыта', result['reason'])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(len(self.inbox()), 1)
+
+    def test_a_complete_letter_still_passes_the_body_gate(self):
+        self.letter()
+        result = mailroom.run(self.cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'replied')
+
+
 if __name__ == '__main__':
     unittest.main()

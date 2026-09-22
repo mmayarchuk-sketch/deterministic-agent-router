@@ -221,9 +221,25 @@ stored answer wins over a freshly generated one, so a repeat finishes with the
 same outcome and does not call the model again. A mirror claim cannot be
 completed at all until such an outcome is fenced under it.
 
-Two automated passes do not answer each other: a letter whose id carries an
-automated prefix (`mailroom-`, `mirror-`) is recorded as read (`superseded`)
-and left unanswered. Sender and recipient are checked against a configured
+Two automated passes do not answer each other, but the prefix in a letter's
+id (`mailroom-`, `mirror-`) is set by whoever wrote the letter, so it proves
+nothing on its own. A letter is recorded as read and left unanswered
+(`superseded`) only when the local outgoing index of this very mailbox holds a
+record for that id with the same filename and the same full content SHA, and
+the letter's sender→recipient direction is the one that writes into that
+mailbox. Anything else — a trusted colleague reusing the prefix, substituted
+content, a missing record, a reversed direction — is an observable refusal
+(`refused_forged_auto_id`), never a silent archive. Astra's review of `B082`
+found that hole.
+
+A letter that opens a header and carries nothing after it is not a letter:
+`refused_malformed_letter`, the model is not raised, the letter is not
+archived and the claim is released. This is the receiving end of a real
+incident — a letter written in two steps was collected between them and
+arrived with a header only. The sending end is `write_letter.py`, which builds
+the whole file in memory and puts it into the mailbox with one atomic write.
+
+Sender and recipient are checked against a configured
 trusted mapping **before** the model is raised; the mirror refuses to run at
 all when that mapping is absent. Three partial failures are distinct
 exceptions — `ModelUnavailable`, `DeliveryFailed`, `CompletionFailed` — and in
