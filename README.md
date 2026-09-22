@@ -296,6 +296,23 @@ registers itself when sent.
 person's session or to the automaton. Without that setting nothing is signed,
 so the old outbox path stays byte-for-byte as it was.
 
+### Eligibility is granted, never inferred
+
+A letter is worked only when it is named: `eligible.names` or the name of the
+letter it answers in `eligible.reply_to`. "Not our thread" does **not** mean
+"nobody's thread" — the other branch is alive and works its own
+correspondence, and a thread with a living owner is not the mirror's target.
+Declaring the `eligible` key means the pass is permissive-by-allowlist, so an
+empty allowlist works nothing at all.
+
+### An automated letter is read, not buried
+
+Refusing to auto-answer and hiding the letter are different things. An
+automated letter is completed in place: the outcome and the receipt are
+durable, the letter stays where its reader will see it, and the consumer
+archives it once it has actually been delivered. The mirror's own reply stays
+visible in `outbox` for the same reason.
+
 ### The shared mailbox: answer, but do not take away
 
 Most of `inbox` is the other branch's correspondence, and that mailbox is

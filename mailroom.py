@@ -289,15 +289,21 @@ def run(cfg, classifier=None, now=None):
                 continue
             messages.append({'name': запись['name'], 'sha256': запись['sha256']})
             break
-    elif cfg.get('own_thread_registry'):
-        # Весь ящик, но с правилами общего ящика: письмо, ответа не просящее,
-        # и письмо, по которому квитанция уже есть, не берутся. Отсечка по
-        # дате оставляет старый завал нетронутым, пока его не разберут
-        # намеренно: расписание не должно выстрелить полусотней эскалаций.
+    elif cfg.get('eligible') is not None:
+        # ОТБОР РАЗРЕШИТЕЛЬНЫЙ. «Письмо не нашей нити» НЕ значит «письмо
+        # бесхозное»: у ветви A тоже есть живой хозяин, и закреплённая за
+        # человеком переписка зеркалу не цель (D-CODEX-0025, уточнение к
+        # B091). Берётся только то, что названо явно: имя письма или имя
+        # письма, на которое оно отвечает.
+        разрешено = cfg['eligible'] or {}
+        имена = set(разрешено.get('names') or [])
+        нити = set(разрешено.get('reply_to') or [])
         отсечка = cfg.get('process_from_utc') or ''
         messages = []
         for запись in channel.list_headers(mailbox=source_mailbox):
             шапка = letter_header(запись['head'])
+            if запись['name'] not in имена and (шапка.get('reply_to') or '') not in нити:
+                continue
             if str(шапка.get('needs_reply', 'true')).lower() in ('false', '0', 'no'):
                 continue
             if отсечка and (шапка.get('created_utc') or '') < отсечка:
@@ -305,9 +311,8 @@ def run(cfg, classifier=None, now=None):
             if channel.receipt_path(запись['name'], запись['sha256'],
                                     mailbox=source_mailbox).exists():
                 continue
-            # Свою нить веду я. Смысл расписания — переписка, которую не
-            # ведёт НИКТО; там, где живой собеседник есть, автомат забирает
-            # у него письмо вместе с возражением, ради которого оно написано.
+            # Свою живую нить веду я, и это правило постоянное: письма Астры
+            # ко мне читает и закрывает не автомат.
             if cfg.get('skip_own_thread') and наше_письмо(шапка):
                 continue
             messages.append({'name': запись['name'], 'sha256': запись['sha256']})
@@ -318,7 +323,7 @@ def run(cfg, classifier=None, now=None):
     if not messages:
         return {'status': 'idle',
                 'scope': ('only_names' if scoped else 'thread' if нить
-                          else 'mailbox-shared' if cfg.get('own_thread_registry')
+                          else 'eligible' if cfg.get('eligible') is not None
                           else 'mailbox')}
     msg = messages[0]
     actor = cfg.get('actor', 'mailroom')
@@ -391,10 +396,15 @@ def run(cfg, classifier=None, now=None):
                 msg['name'], msg['sha256'], claim['token'], mailbox=source_mailbox,
                 payload={'action': 'no_reply', 'kind': 'automated_letter',
                          'reason': 'letter was produced by an automated pass'}, now=now)
+            # Исход фиксируем, но письмо НЕ уносим: ответ зеркала должен
+            # оставаться видимым получателю до его собственной квитанции.
+            # Запрет повторного автоответа и видимость доставки — разные
+            # вещи (D-CODEX-0025, п. 4).
             done = _complete(msg, claim, source_mailbox, 'superseded',
-                             prepared['path'], [], now)
+                             prepared['path'], [], now, archive=False)
             return {'status': 'superseded', 'name': msg['name'],
-                    'outcome_ref': prepared['path'], 'receipt': done['receipt']}
+                    'outcome_ref': prepared['path'], 'receipt': done['receipt'],
+                    'archived': done['archived'], 'left_visible': True}
 
         # Переиспользование обязано быть ВИДНЫМ. Теневой проход хранит
         # кандидата и на повторе возвращает его же, не поднимая модель: для
@@ -462,7 +472,8 @@ def run(cfg, classifier=None, now=None):
                 disposition = 'escalated'
         except Exception as error:
             raise DeliveryFailed(str(error)) from error
-        своё = not cfg.get('own_thread_registry') or наше_письмо(header)
+        своё = not cfg.get('eligible') and not cfg.get('own_thread_registry') \
+            or наше_письмо(header)
         done = _complete(msg, claim, source_mailbox, disposition,
                          outcome_ref, outcome.get('authority_ids'), now,
                          archive=своё)

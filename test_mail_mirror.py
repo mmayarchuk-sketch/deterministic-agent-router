@@ -105,7 +105,9 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(result['name'], reply_name)
         self.assertEqual(len(self.calls), 1, 'на письмо автомата модель не поднимается')
         self.assertEqual(self.inbox(), [])
-        self.assertTrue((channel.MAIL / 'archive' / reply_name).exists())
+        # ответ зеркала остаётся в outbox до квитанции получателя
+        self.assertFalse(result['archived'])
+        self.assertTrue((channel.MAIL / 'outbox' / reply_name).exists())
         receipt = json.loads(Path(result['receipt']).read_text())
         self.assertEqual(receipt['disposition'], 'superseded')
 
@@ -297,7 +299,13 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(result['name'], sent['name'])
         self.assertEqual(self.calls, [])
         self.assertEqual(self.outbox(), [])
-        self.assertTrue((channel.MAIL / 'inbox-archive' / sent['name']).exists())
+        # письмо автомата НЕ уносится: адресат должен его увидеть
+        self.assertFalse(result['archived'])
+        self.assertTrue((channel.MAIL / 'inbox' / sent['name']).exists())
+        self.assertEqual(list((channel.MAIL / 'inbox-archive').glob('*.md')), [])
+        квитанция = json.loads(Path(result['receipt']).read_text())
+        self.assertEqual(квитанция['disposition'], 'superseded')
+        self.assertTrue(квитанция['left_in_mailbox'])
 
     def test_forged_auto_id_from_a_trusted_sender_is_not_superseded(self):
         """Доверенный коллега не может заглушить своё письмо чужим префиксом."""
@@ -599,7 +607,8 @@ class MirrorTests(unittest.TestCase):
 
     def test_a_foreign_thread_is_answered_but_never_taken_out_of_the_mailbox(self):
         имя = self.чужое_письмо()
-        cfg = dict(self.cfg, own_thread_registry=True)
+        cfg = dict(self.cfg, own_thread_registry=True,
+                   eligible={'names': [имя]})
         result = mailroom.run(cfg, classifier=self.classifier(), now=100)
         self.assertEqual(result['status'], 'replied')
         self.assertFalse(result['own_thread'])
@@ -613,12 +622,13 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(len(self.outbox()), 1)
 
     def test_a_letter_already_receipted_is_not_taken_again(self):
-        self.чужое_письмо()
-        cfg = dict(self.cfg, own_thread_registry=True)
+        имя = self.чужое_письмо()
+        cfg = dict(self.cfg, own_thread_registry=True,
+                   eligible={'names': [имя]})
         mailroom.run(cfg, classifier=self.classifier(), now=100)
         второй = mailroom.run(cfg, classifier=self.classifier(), now=101)
         self.assertEqual(второй['status'], 'idle')
-        self.assertEqual(второй['scope'], 'mailbox-shared')
+        self.assertEqual(второй['scope'], 'eligible')
         self.assertEqual(len(self.calls), 1, 'модель второй раз не поднимается')
         self.assertEqual(len(self.outbox()), 1)
 
@@ -629,7 +639,8 @@ class MirrorTests(unittest.TestCase):
             путь.write_text(путь.read_text().replace('reply_to: "-"',
                                                      'reply_to: "x--b086.md"'))
         channel.register_our_letter('x--b086.md', 'a' * 64)
-        cfg = dict(self.cfg, own_thread_registry=True)
+        cfg = dict(self.cfg, own_thread_registry=True,
+                   eligible={'names': [имя]})
         result = mailroom.run(cfg, classifier=self.classifier(), now=100)
         self.assertTrue(result['own_thread'])
         self.assertTrue(result['archived'])
@@ -640,6 +651,7 @@ class MirrorTests(unittest.TestCase):
         старое = self.чужое_письмо(name='old.md', ident='codex-a-6',
                                    создано='2026-09-20T10:00:00Z')
         cfg = dict(self.cfg, own_thread_registry=True,
+                   eligible={'names': [старое]},
                    process_from_utc='2026-09-22T00:00:00Z')
         result = mailroom.run(cfg, classifier=self.classifier(), now=100)
         self.assertEqual(result['status'], 'idle')
@@ -659,7 +671,8 @@ class MirrorTests(unittest.TestCase):
                                                      'reply_to: "x--b089.md"'))
         channel.register_our_letter('x--b089.md', 'b' * 64)
         чужое = self.чужое_письмо(name='zzz-foreign.md', ident='codex-a-8')
-        cfg = dict(self.cfg, own_thread_registry=True, skip_own_thread=True)
+        cfg = dict(self.cfg, own_thread_registry=True, skip_own_thread=True,
+                   eligible={'names': [моё, чужое]})
         result = mailroom.run(cfg, classifier=self.classifier(), now=100)
         self.assertEqual(result['name'], чужое, 'берётся чужая нить, не моя')
         self.assertTrue((channel.MAIL / 'inbox' / моё).exists())
@@ -707,6 +720,34 @@ class MirrorTests(unittest.TestCase):
         путь = write_letter.write('outbox', 'b0998', 'Письмо рукой', 'тело')
         self.assertIn(путь.name, channel.our_letters())
         self.assertTrue(mailroom.наше_письмо({'reply_to': путь.name}))
+
+
+    # --- D-CODEX-0025, уточнение: отбор разрешительный ---
+
+    def test_a_letter_nobody_allowed_is_not_touched(self):
+        """«Не наша нить» не значит «бесхозная»: у ветви A есть живой хозяин."""
+        чужое = self.чужое_письмо(name='branch-a.md', ident='codex-a-11')
+        cfg = dict(self.cfg, own_thread_registry=True, skip_own_thread=True,
+                   eligible={'names': ['совсем-другое.md']})
+        result = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'idle')
+        self.assertEqual(result['scope'], 'eligible')
+        self.assertEqual(self.calls, [])
+        self.assertTrue((channel.MAIL / 'inbox' / чужое).exists())
+        self.assertEqual(self.outbox(), [])
+
+    def test_an_allowed_thread_is_selected_by_the_letter_it_answers(self):
+        имя = self.letter(name='canary-thread.md', ident='codex-canary-2')
+        with channel.locked():
+            путь = channel.MAIL / 'inbox' / 'canary-thread.md'
+            путь.write_text(путь.read_text().replace(
+                'reply_to: "-"', 'reply_to: "synthetic-canary-root.md"'))
+        cfg = dict(self.cfg, own_thread_registry=True, skip_own_thread=True,
+                   eligible={'reply_to': ['synthetic-canary-root.md']})
+        result = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'replied')
+        self.assertEqual(result['name'], имя)
+        self.assertEqual(len(self.calls), 1)
 
 
 if __name__ == '__main__':
