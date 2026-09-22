@@ -279,6 +279,23 @@ answer into someone else's thread. The letter was recalled before delivery and
 the source letter was put back in `inbox` unchanged, but the rule was wrong:
 belonging to a thread is never "looks like".
 
+### Whose thread it is comes from a registry, not from a name
+
+Ownership of a thread is decided by an exact registry of the letters **we**
+sent: `mail/.our-letters.json`, name to full SHA, written by the transport at
+the moment of sending (both `notify_codex` and `write_letter.py`). No
+substrings, no patterns, no similar-looking slugs — a pattern already
+mistook a foreign letter for ours once. The historical part of the registry
+was seeded once from letters carrying our own ids; everything after that
+registers itself when sent.
+
+### An automated reply says that it is one
+
+`generated_by` puts the signature both in the header and in the subject
+(`[mirror] …`), so a correspondent can tell whether they are talking to a
+person's session or to the automaton. Without that setting nothing is signed,
+so the old outbox path stays byte-for-byte as it was.
+
 ### The shared mailbox: answer, but do not take away
 
 Most of `inbox` is the other branch's correspondence, and that mailbox is

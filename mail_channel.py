@@ -120,7 +120,43 @@ def _archived(mailbox, name, expected_sha256=None):
     return None
 
 
-def _deliver(mailbox, sender, recipient, subject, body, request_id, needs_reply, reply_to):
+OUR_LETTERS = '.our-letters.json'
+
+
+def register_our_letter(name, sha256):
+    """Записать в реестр, что ЭТО письмо отправили мы.
+
+    Принадлежность нити определяется по реестру, а не по образцу имени:
+    22.09.2026 образец «--b0» опознал чужое письмо как наше, потому что слаг
+    чужой темы начинался так же. Похожесть — не признак принадлежности.
+    Вызывается под уже взятым замком транспорта.
+    """
+    путь = MAIL / OUR_LETTERS
+    реестр = {}
+    if путь.exists():
+        try:
+            реестр = json.loads(путь.read_text())
+        except (ValueError, OSError):
+            реестр = {}
+    if реестр.get(name) != sha256:
+        реестр[name] = sha256
+        atomic_write(путь, json.dumps(реестр, ensure_ascii=False, indent=2))
+    return len(реестр)
+
+
+def our_letters():
+    """Реестр наших исходящих: имя → sha256. Пустой, если реестра ещё нет."""
+    путь = MAIL / OUR_LETTERS
+    if not путь.exists():
+        return {}
+    try:
+        return json.loads(путь.read_text())
+    except (ValueError, OSError):
+        return {}
+
+
+def _deliver(mailbox, sender, recipient, subject, body, request_id, needs_reply,
+             reply_to, generated_by=None):
     _mailbox(mailbox)
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', request_id):
         raise ValueError('request_id must contain 1–80 letters, digits, underscores or hyphens')
@@ -149,6 +185,12 @@ def _deliver(mailbox, sender, recipient, subject, body, request_id, needs_reply,
             header = {'id': request_id, 'from': sender, 'to': recipient, 'subject': subject,
                       'created_utc': now.isoformat(timespec='seconds').replace('+00:00', 'Z'),
                       'reply_to': reply_to, 'needs_reply': bool(needs_reply)}
+            if generated_by:
+                # Автоответ обязан быть видно автоответом: и в шапке, и в теме.
+                # Иначе собеседник не знает, с кем говорит — со мной или с
+                # автоматом, и это не мелочь, а подмена собеседника.
+                header['generated_by'] = generated_by
+                header['subject'] = '[%s] %s' % (generated_by, subject)
             content = '---\n' + '\n'.join(f'{k}: {json.dumps(v, ensure_ascii=False)}' for k, v in header.items()) + '\n---\n\n' + body + '\n'
             record = {'name': name, 'digest': digest, 'content': content}
             index[request_id] = record
@@ -160,20 +202,25 @@ def _deliver(mailbox, sender, recipient, subject, body, request_id, needs_reply,
                              hashlib.sha256(record['content'].encode()).hexdigest())
         if not delivered.exists() and archived is None:
             atomic_write(delivered, record['content'])
+        if mailbox == 'outbox':
+            register_our_letter(record['name'],
+                                hashlib.sha256(record['content'].encode()).hexdigest())
         return {'name': record['name'], 'path': str(archived if archived else delivered),
                 'archived': archived is not None,
                 'delivery': 'file-written; model wakeup is separate'}
 
 
-def notify_claude(subject, body, request_id, needs_reply=True, reply_to='-'):
+def notify_claude(subject, body, request_id, needs_reply=True, reply_to='-',
+                  generated_by=None):
     return _deliver('inbox', 'codex', 'claude', subject, body, request_id,
-                    needs_reply, reply_to)
+                    needs_reply, reply_to, generated_by)
 
 
-def notify_codex(subject, body, request_id, needs_reply=True, reply_to='-'):
+def notify_codex(subject, body, request_id, needs_reply=True, reply_to='-',
+                 generated_by=None):
     """Зеркальная доставка: ответ от Claude к Codex ложится в outbox."""
     return _deliver('outbox', 'claude', 'codex', subject, body, request_id,
-                    needs_reply, reply_to)
+                    needs_reply, reply_to, generated_by)
 
 
 def local_delivery_record(name, expected_sha256, request_id, *, mailbox='outbox'):

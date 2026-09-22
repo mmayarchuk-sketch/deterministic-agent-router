@@ -576,6 +576,7 @@ class MirrorTests(unittest.TestCase):
             путь.write_text(путь.read_text()
                             .replace('reply_to: "-"', 'reply_to: "x--b086.md"')
                             .replace('needs_reply: true', 'needs_reply: false'))
+        channel.register_our_letter('x--b086.md', 'c' * 64)
         cfg = dict(self.cfg, only_reply_to_pattern=r'--b\d{3}\.md$')
         result = mailroom.run(cfg, classifier=self.classifier(), now=100)
         self.assertEqual(result['status'], 'idle')
@@ -598,7 +599,7 @@ class MirrorTests(unittest.TestCase):
 
     def test_a_foreign_thread_is_answered_but_never_taken_out_of_the_mailbox(self):
         имя = self.чужое_письмо()
-        cfg = dict(self.cfg, own_thread_pattern=r'--b\d{3}\.md$')
+        cfg = dict(self.cfg, own_thread_registry=True)
         result = mailroom.run(cfg, classifier=self.classifier(), now=100)
         self.assertEqual(result['status'], 'replied')
         self.assertFalse(result['own_thread'])
@@ -613,7 +614,7 @@ class MirrorTests(unittest.TestCase):
 
     def test_a_letter_already_receipted_is_not_taken_again(self):
         self.чужое_письмо()
-        cfg = dict(self.cfg, own_thread_pattern=r'--b\d{3}\.md$')
+        cfg = dict(self.cfg, own_thread_registry=True)
         mailroom.run(cfg, classifier=self.classifier(), now=100)
         второй = mailroom.run(cfg, classifier=self.classifier(), now=101)
         self.assertEqual(второй['status'], 'idle')
@@ -627,7 +628,8 @@ class MirrorTests(unittest.TestCase):
             путь = channel.MAIL / 'inbox' / 'mine.md'
             путь.write_text(путь.read_text().replace('reply_to: "-"',
                                                      'reply_to: "x--b086.md"'))
-        cfg = dict(self.cfg, own_thread_pattern=r'--b\d{3}\.md$')
+        channel.register_our_letter('x--b086.md', 'a' * 64)
+        cfg = dict(self.cfg, own_thread_registry=True)
         result = mailroom.run(cfg, classifier=self.classifier(), now=100)
         self.assertTrue(result['own_thread'])
         self.assertTrue(result['archived'])
@@ -637,7 +639,7 @@ class MirrorTests(unittest.TestCase):
     def test_the_old_backlog_is_left_alone_until_asked_for(self):
         старое = self.чужое_письмо(name='old.md', ident='codex-a-6',
                                    создано='2026-09-20T10:00:00Z')
-        cfg = dict(self.cfg, own_thread_pattern=r'--b\d{3}\.md$',
+        cfg = dict(self.cfg, own_thread_registry=True,
                    process_from_utc='2026-09-22T00:00:00Z')
         result = mailroom.run(cfg, classifier=self.classifier(), now=100)
         self.assertEqual(result['status'], 'idle')
@@ -655,9 +657,9 @@ class MirrorTests(unittest.TestCase):
             путь = channel.MAIL / 'inbox' / 'aaa-mine.md'
             путь.write_text(путь.read_text().replace('reply_to: "-"',
                                                      'reply_to: "x--b089.md"'))
+        channel.register_our_letter('x--b089.md', 'b' * 64)
         чужое = self.чужое_письмо(name='zzz-foreign.md', ident='codex-a-8')
-        cfg = dict(self.cfg, own_thread_pattern=r'--b\d{3}\.md$',
-                   skip_own_thread=True)
+        cfg = dict(self.cfg, own_thread_registry=True, skip_own_thread=True)
         result = mailroom.run(cfg, classifier=self.classifier(), now=100)
         self.assertEqual(result['name'], чужое, 'берётся чужая нить, не моя')
         self.assertTrue((channel.MAIL / 'inbox' / моё).exists())
@@ -666,6 +668,45 @@ class MirrorTests(unittest.TestCase):
         self.assertTrue((channel.MAIL / 'inbox' / моё).exists(),
                         'моё письмо так и лежит, ждёт меня')
         self.assertEqual(len(self.calls), 1)
+
+
+    # --- D-CODEX-0025: подпись автоответа и реестр вместо образца ---
+
+    def test_an_automated_reply_says_it_is_automated(self):
+        self.letter()
+        cfg = dict(self.cfg, generated_by='mirror')
+        result = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        письмо = self.outbox()[0].read_text()
+        self.assertIn('generated_by: "mirror"', письмо)
+        self.assertIn('subject: "[mirror] ', письмо)
+        self.assertEqual(result['status'], 'replied')
+
+    def test_without_that_setting_nothing_is_signed(self):
+        self.letter()
+        mailroom.run(self.cfg, classifier=self.classifier(), now=100)
+        письмо = self.outbox()[0].read_text()
+        self.assertNotIn('generated_by', письмо)
+        self.assertIn('subject: "Answer"', письмо)
+
+    def test_thread_ownership_comes_from_the_registry_not_from_a_lookalike(self):
+        канал = channel.our_letters()
+        self.assertEqual(канал, {})
+        отправленное = channel.notify_codex('Моё письмо', 'тело', 'b0999')
+        реестр = channel.our_letters()
+        self.assertIn(отправленное['name'], реестр)
+        # ответ на наше письмо — наша нить
+        self.assertTrue(mailroom.наше_письмо({'reply_to': отправленное['name']}))
+        # похожее имя, которого мы не отправляли, — не наша
+        self.assertFalse(mailroom.наше_письмо(
+            {'reply_to': '2026-09-21T15-46-21Z--b0-scenariy-1--mail-206.md'}))
+        self.assertFalse(mailroom.наше_письмо({'reply_to': '-'}))
+        self.assertFalse(mailroom.наше_письмо({}))
+
+    def test_a_hand_written_letter_enters_the_registry_too(self):
+        import write_letter
+        путь = write_letter.write('outbox', 'b0998', 'Письмо рукой', 'тело')
+        self.assertIn(путь.name, channel.our_letters())
+        self.assertTrue(mailroom.наше_письмо({'reply_to': путь.name}))
 
 
 if __name__ == '__main__':

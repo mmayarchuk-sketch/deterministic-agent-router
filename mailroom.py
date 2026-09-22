@@ -105,6 +105,18 @@ def gate(cfg, mailbox):
     return set(senders), set(recipients)
 
 
+def наше_письмо(шапка):
+    """Отвечает ли это письмо на НАШЕ — по точному реестру отправленного.
+
+    Реестр ведёт сам транспорт: каждое письмо, положенное нами в outbox,
+    записывается туда именем и полным SHA. Ни подстрок, ни образцов, ни
+    похожих слагов: 22.09.2026 образец «--b0» опознал чужое письмо как наше,
+    и зеркало ответило в чужой нити.
+    """
+    ответ_на = (шапка.get('reply_to') or '').strip()
+    return bool(ответ_на) and ответ_на in channel.our_letters()
+
+
 def build_prompt(letter, digests, policy):
     return f'''You are Grow365 Mailroom, a narrow technical correspondence worker.
 
@@ -277,7 +289,7 @@ def run(cfg, classifier=None, now=None):
                 continue
             messages.append({'name': запись['name'], 'sha256': запись['sha256']})
             break
-    elif cfg.get('own_thread_pattern'):
+    elif cfg.get('own_thread_registry'):
         # Весь ящик, но с правилами общего ящика: письмо, ответа не просящее,
         # и письмо, по которому квитанция уже есть, не берутся. Отсечка по
         # дате оставляет старый завал нетронутым, пока его не разберут
@@ -296,9 +308,7 @@ def run(cfg, classifier=None, now=None):
             # Свою нить веду я. Смысл расписания — переписка, которую не
             # ведёт НИКТО; там, где живой собеседник есть, автомат забирает
             # у него письмо вместе с возражением, ради которого оно написано.
-            if (cfg.get('skip_own_thread')
-                    and re.search(cfg['own_thread_pattern'],
-                                  шапка.get('reply_to', '') or '')):
+            if cfg.get('skip_own_thread') and наше_письмо(шапка):
                 continue
             messages.append({'name': запись['name'], 'sha256': запись['sha256']})
             break
@@ -308,7 +318,7 @@ def run(cfg, classifier=None, now=None):
     if not messages:
         return {'status': 'idle',
                 'scope': ('only_names' if scoped else 'thread' if нить
-                          else 'mailbox-shared' if cfg.get('own_thread_pattern')
+                          else 'mailbox-shared' if cfg.get('own_thread_registry')
                           else 'mailbox')}
     msg = messages[0]
     actor = cfg.get('actor', 'mailroom')
@@ -438,8 +448,12 @@ def run(cfg, classifier=None, now=None):
         try:
             if outcome['action'] == 'reply':
                 deliver = getattr(channel, DELIVER[reply_mailbox])
+                # Подписывается тот, кого настроили подписываться: прежний
+                # путь outbox остаётся байт в байт прежним.
+                подпись = cfg.get('generated_by')
                 sent = deliver(outcome['subject'], outcome['body'], request_id,
-                               needs_reply=True, reply_to=msg['name'])
+                               needs_reply=True, reply_to=msg['name'],
+                               generated_by=подпись)
                 outcome_ref = sent['path']
                 disposition = 'replied'
             else:
@@ -448,9 +462,7 @@ def run(cfg, classifier=None, now=None):
                 disposition = 'escalated'
         except Exception as error:
             raise DeliveryFailed(str(error)) from error
-        своё = (not cfg.get('own_thread_pattern')
-                or bool(re.search(cfg['own_thread_pattern'],
-                                  header.get('reply_to', '') or '')))
+        своё = not cfg.get('own_thread_registry') or наше_письмо(header)
         done = _complete(msg, claim, source_mailbox, disposition,
                          outcome_ref, outcome.get('authority_ids'), now,
                          archive=своё)

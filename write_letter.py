@@ -45,6 +45,9 @@ def write(mailbox, letter_id, subject, body, reply_to='-', needs_reply=True):
             raise ValueError('письмо с таким именем уже лежит в ящике: %s' % имя)
         # один atomic_write: в ящике файл появляется сразу целым
         channel.atomic_write(путь, текст)
+        # и сразу в реестр наших исходящих: по нему определяется своя нить
+        if mailbox == 'outbox':
+            channel.register_our_letter(имя, channel._digest(путь))
     return путь
 
 
