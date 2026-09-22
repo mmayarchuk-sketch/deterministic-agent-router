@@ -257,8 +257,32 @@ def release_claim(name, expected_sha256, token):
         return {'released': True}
 
 
+def _состояние_доставки(name, sha256):
+    """Что известно о доставке этой точной версии, или None, если учёта нет.
+
+    Учёт ведёт owner_watch рядом с почтой. Если файла учёта нет вовсе —
+    возвращаем None и НЕ запрещаем подтверждение: так ведут себя сценарии без
+    mailroom, и ломать их здесь нечем. Это названная граница, не забывчивость.
+    """
+    учёт = MAIL.parent / 'state' / 'mailroom' / 'owner-delivery.json'
+    if not учёт.exists():
+        return None
+    try:
+        доставки = json.loads(учёт.read_text()).get('deliveries', {})
+    except (ValueError, OSError):
+        return None
+    return доставки.get('%s:%s' % (name, sha256))
+
+
 def acknowledge_owner_escalation(name, expected_sha256):
-    """Acknowledge that the interactive task presented one escalation to the owner."""
+    """Acknowledge that the interactive task presented one escalation to the owner.
+
+    Подтвердить можно только то, что доставлено. 21.09.2026 эта функция унесла
+    в архив семь эскалаций, которых доставщик даже не отправлял: нить владельца
+    была в архиве, записи стояли в `pending`, а подтверждение о доставке ничего
+    не знало. Кандидаты берутся из очереди, файлов там не осталось — и семь
+    сообщений навсегда замерли в состоянии, неотличимом от потерянных.
+    """
     with locked():
         (MAIL / 'owner-archive').mkdir(parents=True, exist_ok=True)
         source = safe_file('owner-outbox', name)
@@ -266,6 +290,12 @@ def acknowledge_owner_escalation(name, expected_sha256):
         current = source if source.exists() else target
         if not current.exists() or _digest(current) != expected_sha256:
             raise ValueError('Escalation changed or disappeared before acknowledgment')
+        учёт = _состояние_доставки(name, expected_sha256)
+        if учёт is not None and учёт.get('state') not in ('delivered', 'overdue',
+                                                          'acknowledged'):
+            raise ValueError(
+                'Эскалацию %s никто не доставлял (состояние %r) — подтверждать '
+                'нечего. Письмо остаётся в очереди.' % (name, учёт.get('state')))
         if source.exists():
             if target.exists():
                 raise ValueError('Owner archive filename collision')

@@ -63,10 +63,22 @@ def run(cfg, runner=subprocess.run, now=None):
             continue
         candidates.append((path, sha, key))
 
+    # Запись ждёт доставки, а файла в очереди нет — доставить её больше нечем.
+    # Молчать об этом нельзя: «ожидает» и «потеряно» выглядели бы одинаково.
+    # Ровно так 21.09.2026 исчезли семь эскалаций про полномочия.
+    неразрешённые = sorted(
+        x['name'] for x in deliveries.values()
+        if x.get('state') == 'pending' and not (folder / x['name']).exists())
+
     if not candidates:
         atomic_write(state_path, json.dumps(state, ensure_ascii=False, indent=2))
-        return {'status': 'idle', 'overdue': [x['name'] for x in deliveries.values()
-                                               if x['state'] == 'overdue']}
+        просроченные = [x['name'] for x in deliveries.values()
+                        if x['state'] == 'overdue']
+        итог = {'status': 'idle', 'overdue': просроченные}
+        if неразрешённые:
+            итог['status'] = 'unresolved_pending'
+            итог['unresolved'] = неразрешённые
+        return итог
 
     target = thread_state(cfg)
     path, sha, key = candidates[0]
@@ -74,7 +86,11 @@ def run(cfg, runner=subprocess.run, now=None):
         deliveries[key] = {'name': path.name, 'sha256': sha, 'state': 'pending',
                            'reason': target['state'], 'observed_at': now}
         atomic_write(state_path, json.dumps(state, ensure_ascii=False, indent=2))
-        return {'status': 'thread_unavailable', 'reason': target['state'], 'name': path.name}
+        итог = {'status': 'thread_unavailable', 'reason': target['state'],
+                'name': path.name}
+        if неразрешённые:
+            итог['unresolved'] = неразрешённые
+        return итог
 
     payload = json.loads(path.read_text())
     message = (
