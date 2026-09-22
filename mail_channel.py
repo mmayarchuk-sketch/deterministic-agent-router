@@ -228,6 +228,27 @@ def read_replies(limit=20, max_chars=100000, *, mailbox='outbox'):
         return {'messages': result, 'remaining': len(files)-len(result)}
 
 
+def list_headers(limit=200, head_bytes=2048, *, mailbox='outbox'):
+    """Имена в порядке приёмника вместе с шапкой, без чтения тел.
+
+    Нужно, чтобы выбрать письмо по признаку шапки, не втягивая в бюджет
+    чтения все тела: иначе письмо своей нити может навсегда остаться за
+    пределом, потому что чужие письма впереди оказались большими.
+    """
+    _mailbox(mailbox)
+    with locked():
+        paths = [safe_file(mailbox, p.name) for p in (MAIL / mailbox).glob('*.md')]
+        records = [{'name': p.name, 'sha256': _digest(p)} for p in paths]
+        ordered = register_and_sort(RECEIVER_STATE, mailbox, records, time.time())
+        out = []
+        for item in ordered[:max(1, min(limit, 1000))]:
+            path = safe_file(mailbox, item['name'])
+            head = path.read_bytes()[:max(256, min(head_bytes, 65536))]
+            out.append({'name': item['name'], 'sha256': item['sha256'],
+                        'head': head.decode('utf-8', 'replace')})
+        return out
+
+
 def read_reply(name, offset=0, max_chars=20000, *, mailbox='outbox'):
     _mailbox(mailbox)
     with locked():

@@ -505,5 +505,84 @@ class MirrorTests(unittest.TestCase):
         self.assertIn('D-CODEX-0007', self.calls[0])
 
 
+    # --- расписание: проход ограничен своей нитью ---
+
+    def test_the_pass_takes_only_letters_from_our_own_thread(self):
+        чужое = self.letter(name='aaa-foreign.md', ident='codex-a-1')
+        with channel.locked():
+            путь = channel.MAIL / 'inbox' / 'aaa-foreign.md'
+            путь.write_text(путь.read_text().replace('reply_to: "-"',
+                            'reply_to: "2026-09-22T00-00-00Z--chuzhoe--claude_a_i1.md"'))
+        моё = self.letter(name='zzz-mine.md', ident='codex-b-1')
+        with channel.locked():
+            путь = channel.MAIL / 'inbox' / 'zzz-mine.md'
+            путь.write_text(путь.read_text().replace('reply_to: "-"',
+                            'reply_to: "2026-09-22T10-29-14Z--otchyot--b086.md"'))
+        cfg = dict(self.cfg, only_reply_to_pattern=r'--b\d{3}\.md$')
+        result = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'replied')
+        self.assertEqual(result['name'], 'zzz-mine.md')
+        self.assertTrue((channel.MAIL / 'inbox' / чужое).exists(),
+                        'чужая нить не тронута')
+        self.assertEqual(len(self.calls), 1)
+
+    def test_no_letter_of_our_thread_means_idle_not_someone_elses(self):
+        чужое = self.letter(name='aaa-foreign.md', ident='codex-a-1')
+        with channel.locked():
+            путь = channel.MAIL / 'inbox' / 'aaa-foreign.md'
+            путь.write_text(путь.read_text().replace('reply_to: "-"',
+                            'reply_to: "2026-09-22T00-00-00Z--chuzhoe--claude_a_i1.md"'))
+        cfg = dict(self.cfg, only_reply_to_pattern=r'--b\d{3}\.md$')
+        result = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'idle')
+        self.assertEqual(result['scope'], 'thread')
+        self.assertEqual(self.calls, [])
+        self.assertTrue((channel.MAIL / 'inbox' / чужое).exists())
+
+    def test_headers_are_listed_without_reading_bodies(self):
+        self.letter(name='one.md', ident='codex-1')
+        with channel.locked():
+            (channel.MAIL / 'inbox' / 'huge.md').write_text(
+                '---\nid: "codex-2"\nfrom: "codex"\nto: "claude"\n'
+                'subject: "Большое"\nreply_to: "--b086.md"\n---\n\n' + 'x' * 300000)
+        записи = channel.list_headers(mailbox='inbox')
+        имена = [z['name'] for z in записи]
+        self.assertIn('huge.md', имена)
+        большое = [z for z in записи if z['name'] == 'huge.md'][0]
+        self.assertLess(len(большое['head']), 5000, 'тело не втягивается')
+        self.assertIn('--b086.md', большое['head'])
+
+
+    def test_a_lookalike_thread_slug_is_not_our_thread(self):
+        """Ровно тот случай 22.09: чужая тема «B0: …» попала под подстроку."""
+        чужое = self.letter(name='foreign-b0.md', ident='codex-a-9')
+        with channel.locked():
+            путь = channel.MAIL / 'inbox' / 'foreign-b0.md'
+            путь.write_text(путь.read_text().replace(
+                'reply_to: "-"',
+                'reply_to: "2026-09-21T15-46-21Z--b0-scenariy-1--mail-206.md"'))
+        cfg = dict(self.cfg, only_reply_to_pattern=r'--b\d{3}\.md$')
+        result = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'idle')
+        self.assertEqual(result['scope'], 'thread')
+        self.assertEqual(self.calls, [])
+        self.assertTrue((channel.MAIL / 'inbox' / чужое).exists())
+        self.assertEqual(self.outbox(), [])
+
+    def test_a_letter_that_asks_for_no_reply_is_left_where_it_lies(self):
+        имя = self.letter(name='no-reply.md', ident='codex-b-2')
+        with channel.locked():
+            путь = channel.MAIL / 'inbox' / 'no-reply.md'
+            путь.write_text(путь.read_text()
+                            .replace('reply_to: "-"', 'reply_to: "x--b086.md"')
+                            .replace('needs_reply: true', 'needs_reply: false'))
+        cfg = dict(self.cfg, only_reply_to_pattern=r'--b\d{3}\.md$')
+        result = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'idle')
+        self.assertEqual(self.calls, [])
+        self.assertTrue((channel.MAIL / 'inbox' / имя).exists())
+        self.assertEqual(list((channel.MAIL / 'inbox-archive').glob('*.md')), [])
+
+
 if __name__ == '__main__':
     unittest.main()

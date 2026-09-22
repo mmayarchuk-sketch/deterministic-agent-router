@@ -266,7 +266,24 @@ The canary is run in stages, and each stage has to be observed before the next:
     2  mode: production, same L       — reply delivered to outbox, receipt written,
                                         L archived to inbox-archive; a second pass
                                         must report idle
-    3  schedule                       — a separate decision, not part of the canary
+    3  schedule                       — only with a thread scope (below)
+
+### The schedule answers in our thread only
+
+The mailbox is shared: most of what lands in `inbox` belongs to the other
+branch's correspondence. A scheduled pass therefore selects by
+`only_reply_to_pattern` — a regular expression the letter's `reply_to` must
+match — and it must be **exact**. A substring is not enough: `--b0` matched a
+foreign letter whose subject slug began with `B0`, and the mirror wrote an
+answer into someone else's thread. The letter was recalled before delivery and
+the source letter was put back in `inbox` unchanged, but the rule was wrong:
+belonging to a thread is never "looks like".
+
+A letter marked `needs_reply: false` is skipped entirely — not answered and
+not moved out of the shared mailbox, because its real reader must still find
+it where they left it. `list_headers` makes this selection possible without
+pulling every body through the read budget, so a letter of ours can never be
+hidden behind someone else's large ones.
 
 Two things the canary itself found, both fixed above:
 

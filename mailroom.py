@@ -244,6 +244,16 @@ def run(cfg, classifier=None, now=None):
     # должна однажды смести ящик оттого, что имя из неё убрали.
     scoped = 'only_names' in cfg
     only = [x for x in (cfg.get('only_names') or []) if x]
+    # Ограничение по нити: письмо берётся, только если оно отвечает на НАШЕ
+    # письмо. Ящик общий, и без этого расписание начнёт отвечать в чужой
+    # переписке — а это не наше дело и не наше решение.
+    #
+    # Образец — ТОЧНЫЙ, а не подстрока. 22.09.2026 подстрока «--b0» поймала
+    # чужое письмо с темой «B0: раздельные инкременты» (слаг в имени файла
+    # тоже начинается с b0), и зеркало написало ответ в чужую нить. Письмо
+    # отозвано до доставки, но правило было негодным: признак принадлежности
+    # нити не бывает «похожим».
+    нить = cfg.get('only_reply_to_pattern')
     if scoped:
         messages = []
         for имя in only:
@@ -254,11 +264,25 @@ def run(cfg, classifier=None, now=None):
                 continue
             messages.append({'name': найдено['name'], 'sha256': найдено['sha256']})
             break
+    elif нить:
+        messages = []
+        for запись in channel.list_headers(mailbox=source_mailbox):
+            шапка = letter_header(запись['head'])
+            if not re.search(нить, шапка.get('reply_to', '') or ''):
+                continue
+            # Письмо, которое ответа не просит, мы не трогаем вовсе: не
+            # отвечаем и не уносим из общего ящика. Второе важнее первого —
+            # ящик общий, и чужой адресат должен найти письмо на месте.
+            if str(шапка.get('needs_reply', 'true')).lower() in ('false', '0', 'no'):
+                continue
+            messages.append({'name': запись['name'], 'sha256': запись['sha256']})
+            break
     else:
         messages = channel.read_replies(limit=1, max_chars=100000,
                                         mailbox=source_mailbox)['messages']
     if not messages:
-        return {'status': 'idle', 'scope': ('only_names' if scoped else 'mailbox')}
+        return {'status': 'idle',
+                'scope': ('only_names' if scoped else 'thread' if нить else 'mailbox')}
     msg = messages[0]
     actor = cfg.get('actor', 'mailroom')
     claim = channel.claim_reply(msg['name'], msg['sha256'], actor,
