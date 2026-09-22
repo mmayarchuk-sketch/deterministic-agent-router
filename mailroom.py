@@ -293,6 +293,13 @@ def run(cfg, classifier=None, now=None):
             if channel.receipt_path(запись['name'], запись['sha256'],
                                     mailbox=source_mailbox).exists():
                 continue
+            # Свою нить веду я. Смысл расписания — переписка, которую не
+            # ведёт НИКТО; там, где живой собеседник есть, автомат забирает
+            # у него письмо вместе с возражением, ради которого оно написано.
+            if (cfg.get('skip_own_thread')
+                    and re.search(cfg['own_thread_pattern'],
+                                  шапка.get('reply_to', '') or '')):
+                continue
             messages.append({'name': запись['name'], 'sha256': запись['sha256']})
             break
     else:

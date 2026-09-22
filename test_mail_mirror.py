@@ -649,5 +649,24 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(свежий['status'], 'replied')
 
 
+    def test_our_own_thread_can_be_left_to_the_living_correspondent(self):
+        моё = self.letter(name='aaa-mine.md', ident='codex-b-9')
+        with channel.locked():
+            путь = channel.MAIL / 'inbox' / 'aaa-mine.md'
+            путь.write_text(путь.read_text().replace('reply_to: "-"',
+                                                     'reply_to: "x--b089.md"'))
+        чужое = self.чужое_письмо(name='zzz-foreign.md', ident='codex-a-8')
+        cfg = dict(self.cfg, own_thread_pattern=r'--b\d{3}\.md$',
+                   skip_own_thread=True)
+        result = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['name'], чужое, 'берётся чужая нить, не моя')
+        self.assertTrue((channel.MAIL / 'inbox' / моё).exists())
+        второй = mailroom.run(cfg, classifier=self.classifier(), now=101)
+        self.assertEqual(второй['status'], 'idle')
+        self.assertTrue((channel.MAIL / 'inbox' / моё).exists(),
+                        'моё письмо так и лежит, ждёт меня')
+        self.assertEqual(len(self.calls), 1)
+
+
 if __name__ == '__main__':
     unittest.main()
