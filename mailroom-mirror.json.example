@@ -1,12 +1,22 @@
 {
   "actor": "claude-mirror",
-  "mode": "production",
+  "mode": "shadow",
   "source_mailbox": "inbox",
-  "trusted_senders": {"inbox": ["codex"]},
-  "expected_recipients": {"inbox": ["claude"]},
+  "only_names": [],
+  "trusted_senders": {
+    "inbox": [
+      "codex"
+    ]
+  },
+  "expected_recipients": {
+    "inbox": [
+      "claude"
+    ]
+  },
   "codex_binary": "/Applications/ChatGPT.app/Contents/Resources/codex",
   "state_directory": "@ДОМ@/Documents/BioSingularity/AI Corporate/agent-dispatcher/state/mirror",
   "working_directory": "@ДОМ@/Documents/BioSingularity/AI Corporate/agent-dispatcher",
+  "codex_home": "@ДОМ@/.codex",
   "memory_digests": [
     "@ДОМ@/.codex/coordination-memory/DIGEST.md",
     "@ДОМ@/.codex/grow365-memory-state/DIGEST.md"

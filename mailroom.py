@@ -205,9 +205,29 @@ def run(cfg, classifier=None, now=None):
     reply_mailbox = REPLY_MAILBOX[source_mailbox]
     senders, recipients = gate(cfg, source_mailbox)
     auto_prefixes = tuple(cfg.get('auto_reply_prefixes', AUTO_PREFIXES))
-    messages = channel.read_replies(limit=1, max_chars=100000, mailbox=source_mailbox)['messages']
+    # Ограничение прохода поимённо. Нужно для первого живого запуска: без него
+    # проход берёт письмо по порядку приёмника, то есть какое придётся, а
+    # первый запуск с живой моделью обязан быть на ИЗВЕСТНОМ письме.
+    # Ключ объявлен — значит проход ограничен, даже если список пуст. Пустой
+    # список тут означает «ничего», а не «весь ящик»: настройка canary не
+    # должна однажды смести ящик оттого, что имя из неё убрали.
+    scoped = 'only_names' in cfg
+    only = [x for x in (cfg.get('only_names') or []) if x]
+    if scoped:
+        messages = []
+        for имя in only:
+            try:
+                найдено = channel.read_reply(имя, mailbox=source_mailbox,
+                                             max_chars=100000)
+            except (FileNotFoundError, ValueError, OSError):
+                continue
+            messages.append({'name': найдено['name'], 'sha256': найдено['sha256']})
+            break
+    else:
+        messages = channel.read_replies(limit=1, max_chars=100000,
+                                        mailbox=source_mailbox)['messages']
     if not messages:
-        return {'status': 'idle'}
+        return {'status': 'idle', 'scope': ('only_names' if scoped else 'mailbox')}
     msg = messages[0]
     actor = cfg.get('actor', 'mailroom')
     claim = channel.claim_reply(msg['name'], msg['sha256'], actor,

@@ -383,5 +383,51 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(result['status'], 'replied')
 
 
+    # --- canary: проход можно ограничить поимённо ---
+
+    def test_only_names_takes_exactly_the_named_letter(self):
+        первое = self.letter(name='aaa-other.md', ident='codex-other')
+        канарейка = self.letter(name='zzz-canary.md', ident='codex-canary')
+        # без ограничения проход взял бы письмо по порядку приёмника
+        порядок = [x['name'] for x in
+                   channel.read_replies(mailbox='inbox')['messages']]
+        self.assertEqual(порядок[0], первое)
+        cfg = dict(self.cfg, only_names=[канарейка])
+        result = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'replied')
+        self.assertEqual(result['name'], канарейка)
+        self.assertTrue((channel.MAIL / 'inbox' / первое).exists())
+        self.assertTrue((channel.MAIL / 'inbox-archive' / канарейка).exists())
+        self.assertEqual(len(self.calls), 1)
+
+    def test_only_names_that_is_absent_touches_nothing(self):
+        имя = self.letter()
+        cfg = dict(self.cfg, only_names=['no-such-letter.md'])
+        result = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'idle')
+        self.assertEqual(result['scope'], 'only_names')
+        self.assertEqual(self.calls, [])
+        self.assertTrue((channel.MAIL / 'inbox' / имя).exists())
+        self.assertEqual(self.outbox(), [])
+
+    def test_only_names_cannot_point_outside_the_mailbox(self):
+        self.letter()
+        cfg = dict(self.cfg, only_names=['../mailroom.json', '/etc/hosts'])
+        result = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'idle')
+        self.assertEqual(self.calls, [])
+        self.assertEqual(len(self.inbox()), 1)
+
+
+    def test_empty_only_names_means_nothing_not_everything(self):
+        имя = self.letter()
+        cfg = dict(self.cfg, only_names=[])
+        result = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'idle')
+        self.assertEqual(result['scope'], 'only_names')
+        self.assertEqual(self.calls, [])
+        self.assertTrue((channel.MAIL / 'inbox' / имя).exists())
+
+
 if __name__ == '__main__':
     unittest.main()

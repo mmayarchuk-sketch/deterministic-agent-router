@@ -246,6 +246,32 @@ exceptions — `ModelUnavailable`, `DeliveryFailed`, `CompletionFailed` — and 
 each the source letter survives, nothing is falsely reported as done, and the
 retry is safe.
 
+### The first live run is scoped by name
+
+A pass normally takes whatever letter comes first in receiver order. That is
+wrong for a first run with a live classifier, which must happen on a *known*
+letter. Declaring `only_names` in the config scopes the pass to those names —
+and declaring the key at all means the pass is scoped, so an empty list means
+*nothing*, never the whole mailbox. A name that is absent, or that tries to
+point outside the mailbox, leaves everything untouched and reports
+`{"status": "idle", "scope": "only_names"}`.
+
+The canary is run in stages, and each stage has to be observed before the next:
+
+    0  mode: shadow, only_names: []   — config loads, gate holds, model not raised,
+                                        nothing touched                     [done]
+    1  mode: shadow, only_names: [L]  — real codex exec on one known letter L;
+                                        candidate written to shadow-outcomes,
+                                        claim released, mailbox untouched
+    2  mode: production, same L       — reply delivered to outbox, receipt written,
+                                        L archived to inbox-archive; a second pass
+                                        must report idle
+    3  schedule                       — a separate decision, not part of the canary
+
+L is a letter the correspondent sends on purpose for this. A letter is never
+fabricated locally to look as if it came from them: the whole trusted-mapping
+and transport-trace machinery exists precisely to make that impossible.
+
 The mirror is **not scheduled** by this release, and the accumulated letters of
 the other branch are not to be processed with it without her knowledge.
 
