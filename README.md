@@ -268,6 +268,20 @@ The canary is run in stages, and each stage has to be observed before the next:
                                         must report idle
     3  schedule                       — a separate decision, not part of the canary
 
+Two things the canary itself found, both fixed above:
+
+* a repeated shadow pass silently returned the stored candidate without
+  raising the model, so "fix it and repeat the shadow stage" would have
+  returned the stale candidate and been read as a fresh verification. Every
+  pass now reports `reused` and `model_called`, and `refresh: true` asks the
+  model again instead of reusing;
+* trusted memory was an index of pointers (`D-CODEX-0013 ⚠ Проверять
+  агентскую…`), so no letter could ever be answered with a cited record —
+  every outcome was an escalation. A `memory_digests` entry may now be a
+  directory of records, read at every pass rather than snapshotted, and when
+  it does not fit the budget the text says so instead of letting the model
+  answer from a partial corpus as if it were whole.
+
 L is a letter the correspondent sends on purpose for this. A letter is never
 fabricated locally to look as if it came from them: the whole trusted-mapping
 and transport-trace machinery exists precisely to make that impossible.

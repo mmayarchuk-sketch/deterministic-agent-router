@@ -184,6 +184,37 @@ def write_owner_escalation(subject, body, request_id, source_name, source_sha):
     return str(path)
 
 
+def прочитать_каталог(folder, предел=100000):
+    """Каталог записей как доверенная память: всегда текущая, не снимок.
+
+    Указатель на запись ответить не позволяет — canary 22.09 дважды упёрся
+    ровно в это: в дайджесте от решения был обрезок «Проверять агентскую…».
+    Снимок полных текстов решает вопрос на день и протухает молча, поэтому
+    читается сам каталог. Если он не поместился, это СКАЗАНО в тексте:
+    модель, отвечающая по обрезанному корпусу как по целому, хуже молчания.
+    """
+    куски, набрано, пропущено = [], 0, 0
+    файлы = sorted(x for x in folder.iterdir()
+                   if x.is_file() and x.suffix in ('.json', '.md', '.txt'))
+    for путь in файлы:
+        try:
+            текст = путь.read_text(encoding='utf-8')
+        except (OSError, UnicodeDecodeError):
+            пропущено += 1
+            continue
+        if набрано + len(текст) > предел:
+            пропущено += 1
+            continue
+        куски.append('### %s\n%s' % (путь.name, текст))
+        набрано += len(текст)
+    шапка = '# Записи из %s (%d из %d)' % (folder.name, len(куски), len(файлы))
+    if пропущено:
+        шапка += ('\nВНИМАНИЕ: %d записей не вошли по размеру. Корпус здесь '
+                  'НЕПОЛНЫЙ: отсутствие записи в этом тексте не означает, '
+                  'что её нет.' % пропущено)
+    return '\n\n'.join([шапка] + куски)
+
+
 def outcome_path(cfg, name, sha256, mailbox='outbox'):
     folder_name = 'shadow-outcomes' if cfg.get('mode') == 'shadow' else 'outcomes'
     folder = Path(cfg['state_directory']) / folder_name
@@ -261,7 +292,9 @@ def run(cfg, classifier=None, now=None):
         digest_texts = []
         for raw in cfg.get('memory_digests', []):
             p = Path(raw).expanduser()
-            if p.exists():
+            if p.is_dir():
+                digest_texts.append(прочитать_каталог(p))
+            elif p.exists():
                 digest_texts.append(p.read_text(encoding='utf-8')[:100000])
         digests = '\n\n'.join(digest_texts)
         known = authority_ids(digests)
@@ -302,16 +335,23 @@ def run(cfg, classifier=None, now=None):
             return {'status': 'superseded', 'name': msg['name'],
                     'outcome_ref': prepared['path'], 'receipt': done['receipt']}
 
+        # Переиспользование обязано быть ВИДНЫМ. Теневой проход хранит
+        # кандидата и на повторе возвращает его же, не поднимая модель: для
+        # цены это хорошо, но «повтори shadow после правки» тогда молча
+        # возвращает старый кандидат, и правку принимают за проверенную.
+        reused = False
         prepared = channel.load_prepared_outcome(msg['name'], msg['sha256'],
                                                  mailbox=source_mailbox)
         if prepared is not None:
             outcome = prepared['payload']
+            reused = True
         else:
             legacy = outcome_path(cfg, msg['name'], msg['sha256'], source_mailbox)
-            if legacy.exists():
+            if legacy.exists() and not cfg.get('refresh'):
                 # Ответы, сохранённые до огороженного хранилища, читаются как есть.
                 persisted = json.loads(legacy.read_text())
                 outcome = persisted.get('outcome', persisted)
+                reused = True
             else:
                 policy = json.loads(Path(cfg.get('policy', POLICY)).read_text())
                 prompt = build_prompt(claim['text'], digests, policy)
@@ -340,7 +380,9 @@ def run(cfg, classifier=None, now=None):
             channel.atomic_write(stored, json.dumps(shadow, ensure_ascii=False, indent=2))
             channel.release_claim(msg['name'], msg['sha256'], claim['token'],
                                   mailbox=source_mailbox)
-            return {'status': 'shadowed', 'name': msg['name'], 'candidate': str(stored)}
+            return {'status': 'shadowed', 'name': msg['name'],
+                    'candidate': str(stored), 'reused': reused,
+                    'model_called': not reused}
 
         try:
             if outcome['action'] == 'reply':
@@ -358,7 +400,8 @@ def run(cfg, classifier=None, now=None):
         done = _complete(msg, claim, source_mailbox, disposition,
                          outcome_ref, outcome.get('authority_ids'), now)
         return {'status': disposition, 'name': msg['name'], 'mailbox': source_mailbox,
-                'outcome_ref': outcome_ref, 'receipt': done['receipt']}
+                'outcome_ref': outcome_ref, 'receipt': done['receipt'],
+                'reused': reused, 'model_called': not reused}
     except Exception:
         # Отпустить захват безопасно на любом шаге: подготовленный ответ
         # привязан к письму, а не к работнику, и повтор возьмёт тот же самый.

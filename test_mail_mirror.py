@@ -429,5 +429,81 @@ class MirrorTests(unittest.TestCase):
         self.assertTrue((channel.MAIL / 'inbox' / имя).exists())
 
 
+    def test_a_repeated_shadow_pass_says_that_it_reused_the_candidate(self):
+        self.letter()
+        cfg = dict(self.cfg, mode='shadow')
+        первый = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(первый['status'], 'shadowed')
+        self.assertFalse(первый['reused'])
+        self.assertTrue(первый['model_called'])
+        второй = mailroom.run(cfg, classifier=self.classifier(), now=101)
+        self.assertTrue(второй['reused'])
+        self.assertFalse(второй['model_called'])
+        self.assertEqual(len(self.calls), 1)
+
+    def test_refresh_asks_the_model_again_instead_of_reusing(self):
+        self.letter()
+        cfg = dict(self.cfg, mode='shadow')
+        mailroom.run(cfg, classifier=self.classifier(), now=100)
+        другой = dict(REPLY, body='Ответ после правки памяти.')
+        свежий = mailroom.run(dict(cfg, refresh=True),
+                              classifier=self.classifier(другой), now=101)
+        self.assertFalse(свежий['reused'])
+        self.assertTrue(свежий['model_called'])
+        self.assertEqual(len(self.calls), 2)
+        кандидат = json.loads(Path(свежий['candidate']).read_text())
+        self.assertIn('после правки памяти', кандидат['outcome']['body'])
+
+    def test_production_reuse_of_a_fenced_answer_is_visible_too(self):
+        self.letter()
+        with patch.object(channel, 'complete_claim', side_effect=OSError('disk')):
+            with self.assertRaises(mailroom.CompletionFailed):
+                mailroom.run(self.cfg, classifier=self.classifier(), now=100)
+        второй = mailroom.run(self.cfg, classifier=self.classifier(), now=101)
+        self.assertEqual(второй['status'], 'replied')
+        self.assertTrue(второй['reused'])
+        self.assertFalse(второй['model_called'])
+
+
+    def test_a_directory_of_records_is_read_as_trusted_memory(self):
+        папка = self.root / 'records'
+        папка.mkdir()
+        (папка / 'D-CODEX-0013.json').write_text(
+            json.dumps({'decision_id': 'D-CODEX-0013',
+                        'decision': 'Проверять почту каждую минуту.'},
+                       ensure_ascii=False), encoding='utf-8')
+        текст = mailroom.прочитать_каталог(папка)
+        self.assertIn('D-CODEX-0013', текст)
+        self.assertIn('каждую минуту', текст)
+        self.assertIn('1 из 1', текст)
+        self.assertNotIn('НЕПОЛНЫЙ', текст)
+        # запись, которую видно, становится известным полномочием
+        self.assertIn('D-CODEX-0013', mailroom.authority_ids(текст))
+
+    def test_a_truncated_corpus_says_so_instead_of_pretending(self):
+        папка = self.root / 'big'
+        папка.mkdir()
+        for i in range(3):
+            (папка / ('F-000%d.json' % i)).write_text('x' * 40, encoding='utf-8')
+        текст = mailroom.прочитать_каталог(папка, предел=50)
+        self.assertIn('НЕПОЛНЫЙ', текст)
+        self.assertIn('1 из 3', текст)
+
+    def test_the_pass_can_take_its_memory_from_a_directory(self):
+        папка = self.root / 'records2'
+        папка.mkdir()
+        (папка / 'D-CODEX-0007.json').write_text(
+            json.dumps({'decision_id': 'D-CODEX-0007',
+                        'decision': 'Mailroom разрешён.'}, ensure_ascii=False),
+            encoding='utf-8')
+        self.letter()
+        cfg = dict(self.cfg, memory_digests=[str(папка)])
+        outcome = dict(REPLY, kind='authorized_action',
+                       authority_ids=['D-CODEX-0007'])
+        result = mailroom.run(cfg, classifier=self.classifier(outcome), now=100)
+        self.assertEqual(result['status'], 'replied')
+        self.assertIn('D-CODEX-0007', self.calls[0])
+
+
 if __name__ == '__main__':
     unittest.main()
