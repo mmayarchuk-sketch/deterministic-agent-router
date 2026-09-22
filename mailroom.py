@@ -105,6 +105,24 @@ def gate(cfg, mailbox):
     return set(senders), set(recipients)
 
 
+def разобрано(name, sha256, mailbox):
+    """Доведён ли исход по этому письму до конца.
+
+    «Квитанция есть» — не то же, что «разобрано»: квитанция пишется ДО
+    архивирования, и падение на этой границе оставляет её в состоянии
+    outcome_durable. Если считать такое письмо разобранным, оно никогда не
+    будет доработано — проверка 7 ловит ровно это.
+    """
+    путь = channel.receipt_path(name, sha256, mailbox=mailbox)
+    if not путь.exists():
+        return False
+    try:
+        состояние = json.loads(путь.read_text()).get('state')
+    except (ValueError, OSError):
+        return False
+    return состояние in ('archived', 'outcome_durable_in_place')
+
+
 def наше_письмо(шапка):
     """Отвечает ли это письмо на НАШЕ — по точному реестру отправленного.
 
@@ -308,8 +326,7 @@ def run(cfg, classifier=None, now=None):
                 continue
             if отсечка and (шапка.get('created_utc') or '') < отсечка:
                 continue
-            if channel.receipt_path(запись['name'], запись['sha256'],
-                                    mailbox=source_mailbox).exists():
+            if разобрано(запись['name'], запись['sha256'], source_mailbox):
                 continue
             # Свою живую нить веду я, и это правило постоянное: письма Астры
             # ко мне читает и закрывает не автомат.
@@ -318,8 +335,15 @@ def run(cfg, classifier=None, now=None):
             messages.append({'name': запись['name'], 'sha256': запись['sha256']})
             break
     else:
-        messages = channel.read_replies(limit=1, max_chars=100000,
-                                        mailbox=source_mailbox)['messages']
+        # Пропускать уже разобранное обязан и прежний путь: письмо, оставленное
+        # в ящике после эскалации, иначе бралось бы каждым проходом заново.
+        # Признак — существующая квитанция, а не исчезновение письма.
+        messages = []
+        for запись in channel.list_headers(mailbox=source_mailbox):
+            if разобрано(запись['name'], запись['sha256'], source_mailbox):
+                continue
+            messages.append({'name': запись['name'], 'sha256': запись['sha256']})
+            break
     if not messages:
         return {'status': 'idle',
                 'scope': ('only_names' if scoped else 'thread' if нить
@@ -474,6 +498,13 @@ def run(cfg, classifier=None, now=None):
             raise DeliveryFailed(str(error)) from error
         своё = not cfg.get('eligible') and not cfg.get('own_thread_registry') \
             or наше_письмо(header)
+        # Эскалация — сигнал ЧЕЛОВЕКУ, а не изъятие письма у собеседника.
+        # 22.09.2026 письмо ветви A к Астре было закрыто эскалацией и уехало в
+        # архив: человек сигнал получил, а живой адресат письма даже не узнал,
+        # что оно есть. Просили там не решения владельца, а слова коллеги.
+        # Исход фиксируется, письмо остаётся; повтор держит квитанция.
+        if disposition == 'escalated':
+            своё = False
         done = _complete(msg, claim, source_mailbox, disposition,
                          outcome_ref, outcome.get('authority_ids'), now,
                          archive=своё)

@@ -750,5 +750,59 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
 
 
+    # --- эскалация не отбирает письмо у живого адресата ---
+
+    def test_an_escalation_leaves_the_letter_for_its_real_reader(self):
+        """22.09: письмо ветви A к Астре закрыли эскалацией, и Астра о нём не узнала."""
+        имя = self.letter()
+        outcome = {'action': 'escalate', 'kind': 'owner_decision', 'subject': 'Нужен владелец',
+                   'body': 'Выбор A или B.', 'authority_ids': [],
+                   'requires_external_action': False, 'reason': 'Новое решение'}
+        result = mailroom.run(self.cfg, classifier=self.classifier(outcome), now=100)
+        self.assertEqual(result['status'], 'escalated')
+        self.assertFalse(result['archived'], 'письмо не уносится')
+        self.assertTrue((channel.MAIL / 'inbox' / имя).exists(),
+                        'адресат обязан найти письмо на месте')
+        self.assertEqual(list((channel.MAIL / 'inbox-archive').glob('*.md')), [])
+        self.assertEqual(len(list((channel.MAIL / 'owner-outbox').glob('*.json'))), 1,
+                         'сигнал человеку при этом есть')
+        квитанция = json.loads(Path(result['receipt']).read_text())
+        self.assertEqual(квитанция['disposition'], 'escalated')
+        self.assertEqual(квитанция['state'], 'outcome_durable_in_place')
+
+    def test_a_letter_left_after_escalation_is_not_escalated_again(self):
+        """Защита от дублей: оставленное письмо не берётся вторым проходом."""
+        self.letter()
+        outcome = {'action': 'escalate', 'kind': 'owner_decision', 'subject': 'Нужен владелец',
+                   'body': 'Выбор A или B.', 'authority_ids': [],
+                   'requires_external_action': False, 'reason': 'Новое решение'}
+        первый = mailroom.run(self.cfg, classifier=self.classifier(outcome), now=100)
+        self.assertEqual(первый['status'], 'escalated')
+        for момент in (101, 102, 103):
+            снова = mailroom.run(self.cfg, classifier=self.classifier(outcome), now=момент)
+            self.assertEqual(снова['status'], 'idle')
+        self.assertEqual(len(self.calls), 1, 'модель поднималась ровно один раз')
+        self.assertEqual(len(list((channel.MAIL / 'owner-outbox').glob('*.json'))), 1,
+                         'эскалация ровно одна, дубля нет')
+        self.assertEqual(len(list((channel.MAIL / 'receipts').glob('*.json'))), 1)
+
+    def test_an_unfinished_completion_is_still_retried(self):
+        """«Квитанция есть» ≠ «разобрано»: падение на границе архива дорабатывается."""
+        self.letter()
+        blocker = channel.MAIL / 'inbox-archive' / 'incoming.md'
+        blocker.parent.mkdir(parents=True, exist_ok=True)
+        blocker.write_text('чужое имя заняло место в архиве')
+        with self.assertRaises(mailroom.CompletionFailed):
+            mailroom.run(self.cfg, classifier=self.classifier(), now=100)
+        квитанция = sorted((channel.MAIL / 'receipts').glob('*.json'))[0]
+        self.assertEqual(json.loads(квитанция.read_text())['state'], 'outcome_durable')
+        self.assertFalse(mailroom.разобрано('incoming.md',
+                                            channel.read_reply('incoming.md', mailbox='inbox')['sha256'],
+                                            'inbox'))
+        blocker.unlink()
+        итог = mailroom.run(self.cfg, classifier=self.classifier(), now=101)
+        self.assertEqual(итог['status'], 'replied')
+
+
 if __name__ == '__main__':
     unittest.main()
