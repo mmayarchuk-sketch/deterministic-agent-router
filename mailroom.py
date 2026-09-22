@@ -19,6 +19,7 @@ import tempfile
 import time
 
 import mail_channel as channel
+import transport_gate
 
 BASE = Path(__file__).resolve().parent
 SCHEMA = BASE / 'mailroom-output.schema.json'
@@ -335,15 +336,14 @@ def run(cfg, classifier=None, now=None):
             messages.append({'name': запись['name'], 'sha256': запись['sha256']})
             break
     else:
-        # Пропускать уже разобранное обязан и прежний путь: письмо, оставленное
-        # в ящике после эскалации, иначе бралось бы каждым проходом заново.
-        # Признак — существующая квитанция, а не исчезновение письма.
-        messages = []
-        for запись in channel.list_headers(mailbox=source_mailbox):
-            if разобрано(запись['name'], запись['sha256'], source_mailbox):
-                continue
-            messages.append({'name': запись['name'], 'sha256': запись['sha256']})
-            break
+        # FAIL CLOSED. Раньше отсутствие списка означало «весь ящик» — и это
+        # оказалось настоящим корнем аварии 22.09: в установленном боевом
+        # конфиге списка не было, и узкий агент забрал письмо живой ветви A.
+        # Отсутствие положительного допуска — неисправная настройка, а не
+        # разрешение на всё.
+        return {'status': 'idle', 'scope': 'config_error',
+                'reason': ('нет положительного допуска: ни only_names, ни eligible. '
+                           'Проход не сканирует ящик целиком.')}
     if not messages:
         return {'status': 'idle',
                 'scope': ('only_names' if scoped else 'thread' if нить
@@ -351,6 +351,19 @@ def run(cfg, classifier=None, now=None):
                           else 'mailbox')}
     msg = messages[0]
     actor = cfg.get('actor', 'mailroom')
+    # ВОРОТА ТРАНСПОРТА. Письмо можно брать только после доказанного сигнала
+    # живому адресату об ЭТОЙ версии. Обхода по времени нет: молчание
+    # транспорта разрешением не становится (D-CODEX-0025, вариант В).
+    if source_mailbox == 'outbox':
+        ворота = transport_gate.открыты(msg['name'], msg['sha256'], cfg)
+        учёт = transport_gate.проход(cfg, ворота, name=msg['name'],
+                                     sha256=msg['sha256'], now=now)
+        if not ворота.get('ok'):
+            return {'status': 'blocked_transport', 'name': msg['name'],
+                    'mailbox': source_mailbox, 'reason': ворота.get('reason'),
+                    'thread_id': ворота.get('thread_id'),
+                    'incident': (учёт.get('incident') or {}).get('incident_id'),
+                    'consecutive': учёт.get('consecutive')}
     claim = channel.claim_reply(msg['name'], msg['sha256'], actor,
                                 ttl_seconds=cfg.get('lease_seconds', 1800), now=now,
                                 mailbox=source_mailbox)

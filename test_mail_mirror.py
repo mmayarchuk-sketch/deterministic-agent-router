@@ -35,7 +35,9 @@ class MirrorTests(unittest.TestCase):
         self.digest.write_text('Decision D-CODEX-0007 permits Mailroom.')
         self.policy = self.root / 'policy.json'
         self.policy.write_text(Path(mailroom.POLICY).read_text())
+        # у зеркала допуск тоже положительный; стенды называют свои письма
         self.cfg = {'actor': 'mirror', 'source_mailbox': 'inbox',
+                    'eligible': {'names': ['incoming.md'], 'reply_to': []},
                     'trusted_senders': {'inbox': ['codex']},
                     'expected_recipients': {'inbox': ['claude']},
                     'memory_digests': [str(self.digest)], 'policy': str(self.policy),
@@ -61,7 +63,36 @@ class MirrorTests(unittest.TestCase):
                 '---\n\nA technical question.\n')
         with channel.locked():
             (channel.MAIL / mailbox / name).write_text(text)
+        self.допустить(name)
         return name
+
+    def допустить(self, *имена):
+        """Внести письма в положительный допуск стенда."""
+        список = self.cfg['eligible']['names']
+        for имя in имена:
+            if имя not in список:
+                список.append(имя)
+
+    def ворота_для(self, cfg, name):
+        """Стенд доставщика для пути outbox: живая нить и доказанный сигнал."""
+        нить = '01a0test-mirror-0000-0000-000000000001'
+        дом = self.root / 'codex-home'
+        (дом / 'sessions').mkdir(parents=True, exist_ok=True)
+        (дом / 'sessions' / ('rollout-%s.jsonl' % нить)).write_text('{}')
+        состояние = self.root / 'watcher-state'
+        состояние.mkdir(parents=True, exist_ok=True)
+        sha = channel._digest(channel.MAIL / 'outbox' / name)
+        (состояние / 'watch.json').write_text(json.dumps(
+            {'batches': [{'id': 'b1', 'status': 'queued', 'thread_id': нить,
+                          'attempt_id': 'a1',
+                          'files': [{'name': name, 'sha256': sha}]}]}, ensure_ascii=False))
+        настройка = self.root / 'outbox-watch.json'
+        настройка.write_text(json.dumps({'thread_id': нить,
+                                         'state_directory': str(состояние),
+                                         'codex_home': str(дом)}, ensure_ascii=False))
+        cfg['delivery_gate'] = {'watcher_config': str(настройка), 'codex_home': str(дом)}
+        cfg['owner_outbox'] = str(channel.MAIL / 'owner-outbox')
+        return cfg
 
     def outbox(self):
         return sorted((channel.MAIL / 'outbox').glob('*.md'))
@@ -76,13 +107,17 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(result['status'], 'replied')
         self.assertEqual(result['mailbox'], 'inbox')
         self.assertEqual(len(self.outbox()), 1)
-        self.assertEqual(self.inbox(), [])
-        self.assertTrue((channel.MAIL / 'inbox-archive' / 'incoming.md').exists())
+        # письмо не нашей нити завершается НА МЕСТЕ: адресат найдёт его там,
+        # где оставил (D-CODEX-0025)
+        self.assertEqual([p.name for p in self.inbox()], ['incoming.md'])
+        self.assertFalse(result['archived'])
+        self.assertEqual(list((channel.MAIL / 'inbox-archive').glob('*.md')), [])
         self.assertEqual(list((channel.MAIL / 'archive').glob('*.md')), [])
         self.assertIn('Stable answer.', self.outbox()[0].read_text())
         receipt = json.loads(Path(result['receipt']).read_text())
         self.assertEqual(receipt['source_mailbox'], 'inbox')
-        self.assertEqual(receipt['state'], 'archived')
+        self.assertEqual(receipt['state'], 'outcome_durable_in_place')
+        self.assertTrue(receipt['left_in_mailbox'])
 
     # 6: собственный ответ зеркала не становится его входом
     def test_own_reply_never_returns_as_input(self):
@@ -99,12 +134,14 @@ class MirrorTests(unittest.TestCase):
         reply_name = self.outbox()[0].name
         codex_side = {'actor': 'codex-mailroom', 'memory_digests': [str(self.digest)],
                       'policy': str(self.policy), 'lease_seconds': 600,
+                      # допуск и здесь положительный: разбирается ровно ответ зеркала
+                      'eligible': {'names': [reply_name], 'reply_to': []},
                       'state_directory': str(self.root / 'codex-state')}
-        result = mailroom.run(codex_side, classifier=self.classifier(), now=102)
+        result = mailroom.run(self.ворота_для(codex_side, reply_name),
+                              classifier=self.classifier(), now=102)
         self.assertEqual(result['status'], 'superseded')
         self.assertEqual(result['name'], reply_name)
         self.assertEqual(len(self.calls), 1, 'на письмо автомата модель не поднимается')
-        self.assertEqual(self.inbox(), [])
         # ответ зеркала остаётся в outbox до квитанции получателя
         self.assertFalse(result['archived'])
         self.assertTrue((channel.MAIL / 'outbox' / reply_name).exists())
@@ -129,6 +166,12 @@ class MirrorTests(unittest.TestCase):
     # 7: падение на границе завершения и архивирования
     def test_crash_at_the_archive_boundary_recovers_to_the_same_result(self):
         self.letter()
+        # чтобы дойти до границы архивирования, письмо должно быть НАШЕЙ нити
+        with channel.locked():
+            путь = channel.MAIL / 'inbox' / 'incoming.md'
+            путь.write_text(путь.read_text().replace('reply_to: "-"',
+                                                     'reply_to: "x--b090.md"'))
+        channel.register_our_letter('x--b090.md', 'd' * 64)
         blocker = channel.MAIL / 'inbox-archive' / 'incoming.md'
         blocker.parent.mkdir(parents=True, exist_ok=True)
         blocker.write_text('another letter already holds this name')
@@ -245,7 +288,7 @@ class MirrorTests(unittest.TestCase):
         result = mailroom.run(self.cfg, classifier=self.classifier(), now=103)
         self.assertEqual(result['status'], 'replied')
         self.assertEqual(len(self.outbox()), 1)
-        self.assertEqual(self.inbox(), [])
+        self.assertEqual(len(self.inbox()), 1, 'исходник остаётся у адресата')
         self.assertEqual(len(self.calls), 2, 'модель звали ровно дважды: отказ и один ответ')
         for failure in (mailroom.ModelUnavailable, mailroom.DeliveryFailed,
                         mailroom.CompletionFailed):
@@ -294,6 +337,7 @@ class MirrorTests(unittest.TestCase):
         """Настоящий автоответ нашего же обработчика ответа не требует."""
         sent = channel.notify_claude('Ответ автомата', 'Тело автоответа',
                                      'mailroom-' + 'b' * 24, reply_to='-')
+        self.допустить(sent['name'])
         result = mailroom.run(self.cfg, classifier=self.classifier(), now=100)
         self.assertEqual(result['status'], 'superseded')
         self.assertEqual(result['name'], sent['name'])
@@ -325,6 +369,7 @@ class MirrorTests(unittest.TestCase):
                                      'mailroom-' + 'c' * 24, reply_to='-')
         path = channel.MAIL / 'inbox' / sent['name']
         path.write_text(path.read_text() + '\nдописано после доставки\n')
+        self.допустить(sent['name'])
         result = mailroom.run(self.cfg, classifier=self.classifier(), now=100)
         self.assertEqual(result['status'], 'refused_forged_auto_id')
         self.assertEqual(self.calls, [])
@@ -367,6 +412,7 @@ class MirrorTests(unittest.TestCase):
             (channel.MAIL / 'inbox' / 'half.md').write_text(
                 '---\nid: "codex-9"\nfrom: "codex"\nto: "claude"\n'
                 'subject: "Обрыв"\nneeds_reply: true\n---\n\n')
+        self.допустить('half.md')
         result = mailroom.run(self.cfg, classifier=self.classifier(), now=100)
         self.assertEqual(result['status'], 'refused_malformed_letter')
         self.assertIn('нет тела', result['reason'])
@@ -379,6 +425,7 @@ class MirrorTests(unittest.TestCase):
         with channel.locked():
             (channel.MAIL / 'inbox' / 'cut.md').write_text(
                 '---\nid: "codex-10"\nfrom: "codex"\nto: "claude"\n')
+        self.допустить('cut.md')
         result = mailroom.run(self.cfg, classifier=self.classifier(), now=100)
         self.assertEqual(result['status'], 'refused_malformed_letter')
         self.assertIn('не закрыта', result['reason'])
@@ -405,7 +452,9 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(result['status'], 'replied')
         self.assertEqual(result['name'], канарейка)
         self.assertTrue((channel.MAIL / 'inbox' / первое).exists())
-        self.assertTrue((channel.MAIL / 'inbox-archive' / канарейка).exists())
+        self.assertTrue((channel.MAIL / 'inbox' / канарейка).exists(),
+                        'взятое письмо завершено на месте, а не унесено')
+        self.assertFalse(result['archived'])
         self.assertEqual(len(self.calls), 1)
 
     def test_only_names_that_is_absent_touches_nothing(self):
@@ -789,6 +838,12 @@ class MirrorTests(unittest.TestCase):
     def test_an_unfinished_completion_is_still_retried(self):
         """«Квитанция есть» ≠ «разобрано»: падение на границе архива дорабатывается."""
         self.letter()
+        # чтобы дойти до границы архивирования, письмо должно быть НАШЕЙ нити
+        with channel.locked():
+            путь = channel.MAIL / 'inbox' / 'incoming.md'
+            путь.write_text(путь.read_text().replace('reply_to: "-"',
+                                                     'reply_to: "x--b090.md"'))
+        channel.register_our_letter('x--b090.md', 'd' * 64)
         blocker = channel.MAIL / 'inbox-archive' / 'incoming.md'
         blocker.parent.mkdir(parents=True, exist_ok=True)
         blocker.write_text('чужое имя заняло место в архиве')
@@ -802,6 +857,56 @@ class MirrorTests(unittest.TestCase):
         blocker.unlink()
         итог = mailroom.run(self.cfg, classifier=self.classifier(), now=101)
         self.assertEqual(итог['status'], 'replied')
+
+
+    # --- корень аварии 22.09: отсутствие допуска ≠ разрешение на весь ящик ---
+
+    def test_without_a_positive_admission_the_pass_does_nothing(self):
+        """Боевой конфиг без allowlist сканировал ящик целиком — так он забрал письмо A."""
+        имя = self.letter()
+        голый = {k: v for k, v in self.cfg.items() if k not in ('eligible', 'only_names')}
+        result = mailroom.run(голый, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'idle')
+        self.assertEqual(result['scope'], 'config_error')
+        self.assertIn('положительного допуска', result['reason'])
+        self.assertEqual(self.calls, [])
+        self.assertTrue((channel.MAIL / 'inbox' / имя).exists())
+        self.assertEqual(self.outbox(), [])
+
+    def test_installed_production_config_cannot_touch_our_live_thread(self):
+        """Проверка на УСТАНОВЛЕННОМ конфиге, а не на стендовой фикстуре."""
+        установлен = Path(__file__).resolve().parent / 'mailroom.json'
+        if not установлен.exists():
+            self.skipTest('боевой конфиг не установлен на этой машине')
+        cfg = json.loads(установлен.read_text())
+        допуск = cfg.get('eligible') or {}
+        self.assertTrue(cfg.get('only_names') is not None or допуск,
+                        'у боевого конфига обязан быть положительный допуск')
+        имена = set(допуск.get('names') or [])
+        нити = set(допуск.get('reply_to') or [])
+        # письмо нашей живой нити: отвечает на моё письмо b0NN
+        живое = {'name': '2026-09-22T17-07-21Z--uae-land-itog-staging--claude_a.md',
+                 'reply_to': '2026-09-22T10-48-26Z--b089-a--b089.md'}
+        self.assertNotIn(живое['name'], имена)
+        self.assertNotIn(живое['reply_to'], нити)
+        # и хотя бы одна зарегистрированная нить/имя всё же есть
+        self.assertTrue(имена or нити, 'иначе механизм не обслуживает ничего')
+
+    def test_both_installed_configs_point_at_the_same_thread(self):
+        """Один дефект в двух файлах: 22.09 я починила нить в одном и пропустила второй."""
+        здесь = Path(__file__).resolve().parent
+        a, b = здесь / 'mailroom.json', здесь / 'outbox-watch.json'
+        if not (a.exists() and b.exists()):
+            self.skipTest('боевые конфиги не установлены на этой машине')
+        нить_a = json.loads(a.read_text()).get('thread_id')
+        нить_b = json.loads(b.read_text()).get('thread_id')
+        self.assertTrue(нить_a and нить_b, 'нить должна быть задана в обоих')
+        self.assertEqual(нить_a, нить_b,
+                         'нити расходятся: эскалации и доставка уйдут в разные места')
+        import transport_gate
+        жива, состояние = transport_gate.живая_нить(
+            нить_a, json.loads(a.read_text()).get('codex_home', '~/.codex'))
+        self.assertTrue(жива, 'настроенная нить не жива: %s' % состояние)
 
 
 if __name__ == '__main__':

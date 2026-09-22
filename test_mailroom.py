@@ -25,14 +25,49 @@ class MailroomTests(unittest.TestCase):
         self.digest.write_text('Decision D-CODEX-0007 permits Mailroom.')
         self.policy = self.root / 'policy.json'
         self.policy.write_text(Path(mailroom.POLICY).read_text())
+        # допуск объявляется явно: без него проход — config_error (D-CODEX-0025)
         self.cfg = {'actor': 'mailroom', 'memory_digests': [str(self.digest)],
+                    'eligible': {'names': ['one.md'], 'reply_to': []},
                     'policy': str(self.policy), 'lease_seconds': 60,
                     'state_directory': str(self.root / 'state')}
+        self.стенд_доставщика()
 
-    def letter(self, name='one.md'):
+    НИТЬ = '01a0test-0000-0000-0000-00000000test'
+
+    def стенд_доставщика(self):
+        """Живая нить и настройка доставщика: без них ворота закрыты."""
+        дом = self.root / 'codex-home'
+        (дом / 'sessions').mkdir(parents=True, exist_ok=True)
+        (дом / 'sessions' / ('rollout-%s.jsonl' % self.НИТЬ)).write_text('{}')
+        состояние = self.root / 'watcher-state'
+        состояние.mkdir(parents=True, exist_ok=True)
+        (состояние / 'watch.json').write_text(json.dumps({'batches': []}))
+        настройка = self.root / 'outbox-watch.json'
+        настройка.write_text(json.dumps({'thread_id': self.НИТЬ,
+                                         'state_directory': str(состояние),
+                                         'codex_home': str(дом)}, ensure_ascii=False))
+        self.cfg['delivery_gate'] = {'watcher_config': str(настройка),
+                                     'codex_home': str(дом)}
+        self.cfg['owner_outbox'] = str(channel.MAIL / 'owner-outbox')
+        self.состояние_доставщика = состояние / 'watch.json'
+
+    def сигнал(self, name, *, status='queued', sha=None, thread=None):
+        """Долговечная запись доставщика: адресату сообщили об ЭТОЙ версии."""
+        путь = channel.MAIL / 'outbox' / name
+        sha = sha or channel._digest(путь)
+        состояние = json.loads(self.состояние_доставщика.read_text())
+        состояние['batches'].append(
+            {'id': 'batch-%d' % len(состояние['batches']), 'status': status,
+             'thread_id': thread or self.НИТЬ, 'attempt_id': 'attempt-1',
+             'files': [{'name': name, 'sha256': sha}]})
+        self.состояние_доставщика.write_text(json.dumps(состояние, ensure_ascii=False))
+
+    def letter(self, name='one.md', *, signalled=True):
         with channel.locked():
             p = channel.MAIL / 'outbox' / name
             p.write_text('Question')
+        if signalled:
+            self.сигнал(name)
 
     def test_technical_reply_is_delivered_and_archived_once(self):
         self.letter()

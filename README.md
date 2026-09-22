@@ -296,6 +296,34 @@ registers itself when sent.
 person's session or to the automaton. Without that setting nothing is signed,
 so the old outbox path stays byte-for-byte as it was.
 
+### The pass does nothing without a positive admission
+
+A config with neither `only_names` nor `eligible` is a **broken config**, not a
+licence to sweep the mailbox: the pass returns `{"status": "idle", "scope":
+"config_error"}` and touches nothing. This was the actual root of the 22.09
+incident — the installed production config had no allowlist at all, so the
+narrow agent scanned the whole outbox and took a live branch's letter ten
+seconds after it arrived. A test loads the *installed* config, not a fixture,
+and proves a live-thread letter cannot be admitted by it.
+
+### A letter is claimed only after its reader has been signalled
+
+`transport_gate` opens only on a durable proof from the deliverer: a batch in
+its state, in status `queued`, into the currently live thread, carrying this
+exact `(name, full sha256)`. A name match is not enough, `retry`/`uncertain`/
+`sending` are not delivery, a signal into another thread does not count, and a
+missing or corrupt state fails closed. There is **no timeout bypass**: silence
+from the transport never becomes permission.
+
+When the gate stays shut for three consecutive passes, a `transport_failed`
+incident is raised on **two independent paths** — a durable record in
+`owner-outbox` and a native macOS notification — because the failure that cost
+us a day was precisely a complaint addressed to the party who could not
+receive it. One path failing does not cancel the other; the incident is
+deduplicated by id, repeated at most every 30 minutes, and closed only by a
+real signal for the exact version. The incident itself grants no right to
+process the letter.
+
 ### Eligibility is granted, never inferred
 
 A letter is worked only when it is named: `eligible.names` or the name of the
