@@ -584,5 +584,70 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(list((channel.MAIL / 'inbox-archive').glob('*.md')), [])
 
 
+    # --- общий ящик: чужая нить разбирается, но остаётся на месте ---
+
+    def чужое_письмо(self, name='foreign.md', ident='codex-a-5', создано='2026-09-22T10:00:00Z'):
+        имя = self.letter(name=name, ident=ident)
+        with channel.locked():
+            путь = channel.MAIL / 'inbox' / name
+            путь.write_text(путь.read_text()
+                            .replace('reply_to: "-"', 'reply_to: "x--claude_a_i7.md"')
+                            .replace('created_utc: "2026-09-22T06:00:00Z"',
+                                     'created_utc: "%s"' % создано))
+        return имя
+
+    def test_a_foreign_thread_is_answered_but_never_taken_out_of_the_mailbox(self):
+        имя = self.чужое_письмо()
+        cfg = dict(self.cfg, own_thread_pattern=r'--b\d{3}\.md$')
+        result = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'replied')
+        self.assertFalse(result['own_thread'])
+        self.assertFalse(result['archived'])
+        self.assertTrue((channel.MAIL / 'inbox' / имя).exists(),
+                        'чужое письмо обязано остаться там, где его ищет адресат')
+        self.assertEqual(list((channel.MAIL / 'inbox-archive').glob('*.md')), [])
+        квитанция = json.loads(Path(result['receipt']).read_text())
+        self.assertEqual(квитанция['state'], 'outcome_durable_in_place')
+        self.assertTrue(квитанция['left_in_mailbox'])
+        self.assertEqual(len(self.outbox()), 1)
+
+    def test_a_letter_already_receipted_is_not_taken_again(self):
+        self.чужое_письмо()
+        cfg = dict(self.cfg, own_thread_pattern=r'--b\d{3}\.md$')
+        mailroom.run(cfg, classifier=self.classifier(), now=100)
+        второй = mailroom.run(cfg, classifier=self.classifier(), now=101)
+        self.assertEqual(второй['status'], 'idle')
+        self.assertEqual(второй['scope'], 'mailbox-shared')
+        self.assertEqual(len(self.calls), 1, 'модель второй раз не поднимается')
+        self.assertEqual(len(self.outbox()), 1)
+
+    def test_our_own_thread_is_still_archived_normally(self):
+        имя = self.letter(name='mine.md', ident='codex-b-7')
+        with channel.locked():
+            путь = channel.MAIL / 'inbox' / 'mine.md'
+            путь.write_text(путь.read_text().replace('reply_to: "-"',
+                                                     'reply_to: "x--b086.md"'))
+        cfg = dict(self.cfg, own_thread_pattern=r'--b\d{3}\.md$')
+        result = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        self.assertTrue(result['own_thread'])
+        self.assertTrue(result['archived'])
+        self.assertFalse((channel.MAIL / 'inbox' / имя).exists())
+        self.assertTrue((channel.MAIL / 'inbox-archive' / имя).exists())
+
+    def test_the_old_backlog_is_left_alone_until_asked_for(self):
+        старое = self.чужое_письмо(name='old.md', ident='codex-a-6',
+                                   создано='2026-09-20T10:00:00Z')
+        cfg = dict(self.cfg, own_thread_pattern=r'--b\d{3}\.md$',
+                   process_from_utc='2026-09-22T00:00:00Z')
+        result = mailroom.run(cfg, classifier=self.classifier(), now=100)
+        self.assertEqual(result['status'], 'idle')
+        self.assertEqual(self.calls, [])
+        self.assertTrue((channel.MAIL / 'inbox' / старое).exists())
+        # отсечку убрали — то же письмо берётся
+        свежий = mailroom.run(dict(cfg, process_from_utc=''),
+                              classifier=self.classifier(), now=101)
+        self.assertEqual(свежий['status'], 'replied')
+
+
 if __name__ == '__main__':
     unittest.main()

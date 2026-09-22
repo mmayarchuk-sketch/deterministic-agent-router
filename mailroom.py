@@ -277,12 +277,32 @@ def run(cfg, classifier=None, now=None):
                 continue
             messages.append({'name': запись['name'], 'sha256': запись['sha256']})
             break
+    elif cfg.get('own_thread_pattern'):
+        # Весь ящик, но с правилами общего ящика: письмо, ответа не просящее,
+        # и письмо, по которому квитанция уже есть, не берутся. Отсечка по
+        # дате оставляет старый завал нетронутым, пока его не разберут
+        # намеренно: расписание не должно выстрелить полусотней эскалаций.
+        отсечка = cfg.get('process_from_utc') or ''
+        messages = []
+        for запись in channel.list_headers(mailbox=source_mailbox):
+            шапка = letter_header(запись['head'])
+            if str(шапка.get('needs_reply', 'true')).lower() in ('false', '0', 'no'):
+                continue
+            if отсечка and (шапка.get('created_utc') or '') < отсечка:
+                continue
+            if channel.receipt_path(запись['name'], запись['sha256'],
+                                    mailbox=source_mailbox).exists():
+                continue
+            messages.append({'name': запись['name'], 'sha256': запись['sha256']})
+            break
     else:
         messages = channel.read_replies(limit=1, max_chars=100000,
                                         mailbox=source_mailbox)['messages']
     if not messages:
         return {'status': 'idle',
-                'scope': ('only_names' if scoped else 'thread' if нить else 'mailbox')}
+                'scope': ('only_names' if scoped else 'thread' if нить
+                          else 'mailbox-shared' if cfg.get('own_thread_pattern')
+                          else 'mailbox')}
     msg = messages[0]
     actor = cfg.get('actor', 'mailroom')
     claim = channel.claim_reply(msg['name'], msg['sha256'], actor,
@@ -421,11 +441,16 @@ def run(cfg, classifier=None, now=None):
                 disposition = 'escalated'
         except Exception as error:
             raise DeliveryFailed(str(error)) from error
+        своё = (not cfg.get('own_thread_pattern')
+                or bool(re.search(cfg['own_thread_pattern'],
+                                  header.get('reply_to', '') or '')))
         done = _complete(msg, claim, source_mailbox, disposition,
-                         outcome_ref, outcome.get('authority_ids'), now)
+                         outcome_ref, outcome.get('authority_ids'), now,
+                         archive=своё)
         return {'status': disposition, 'name': msg['name'], 'mailbox': source_mailbox,
                 'outcome_ref': outcome_ref, 'receipt': done['receipt'],
-                'reused': reused, 'model_called': not reused}
+                'reused': reused, 'model_called': not reused,
+                'archived': done['archived'], 'own_thread': своё}
     except Exception:
         # Отпустить захват безопасно на любом шаге: подготовленный ответ
         # привязан к письму, а не к работнику, и повтор возьмёт тот же самый.
@@ -434,12 +459,13 @@ def run(cfg, classifier=None, now=None):
         raise
 
 
-def _complete(msg, claim, mailbox, disposition, outcome_ref, authority_ids, now):
+def _complete(msg, claim, mailbox, disposition, outcome_ref, authority_ids, now,
+              archive=True):
     try:
         return channel.complete_claim(msg['name'], msg['sha256'], claim['token'],
                                       disposition=disposition, outcome_ref=outcome_ref,
                                       authority_ids=authority_ids, now=now,
-                                      mailbox=mailbox)
+                                      mailbox=mailbox, archive=archive)
     except Exception as error:
         raise CompletionFailed(str(error)) from error
 

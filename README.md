@@ -279,6 +279,19 @@ answer into someone else's thread. The letter was recalled before delivery and
 the source letter was put back in `inbox` unchanged, but the rule was wrong:
 belonging to a thread is never "looks like".
 
+### The shared mailbox: answer, but do not take away
+
+Most of `inbox` is the other branch's correspondence, and that mailbox is
+their only queue. With `own_thread_pattern` set, a pass may work the whole
+mailbox, but a letter outside our thread is completed **in place**: the
+outcome, the reply and the receipt are written under the same lock, and the
+letter stays exactly where its real reader will look for it
+(`state: outcome_durable_in_place`). A letter that already has a receipt is
+never taken again, so leaving it in place does not turn into a loop.
+`process_from_utc` holds the old backlog back until someone asks for it
+deliberately — a schedule must not fire sixty escalations at a person because
+a switch was flipped.
+
 A letter marked `needs_reply: false` is skipped entirely — not answered and
 not moved out of the shared mailbox, because its real reader must still find
 it where they left it. `list_headers` makes this selection possible without

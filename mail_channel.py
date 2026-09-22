@@ -423,9 +423,21 @@ def prepare_outcome(name, expected_sha256, token, *, payload, mailbox='outbox', 
                 'outcome_sha256': record['outcome_sha256'], 'payload': record['payload']}
 
 
+def receipt_path(name, expected_sha256, *, mailbox='outbox'):
+    """Где лежит (или лежала бы) квитанция об этом точном письме."""
+    ключ = _claim_key(mailbox, name, expected_sha256)
+    return MAIL / 'receipts' / (hashlib.sha256(ключ.encode()).hexdigest()[:24] + '.json')
+
+
 def complete_claim(name, expected_sha256, token, *, disposition, outcome_ref,
-                   authority_ids=None, now=None, mailbox='outbox'):
-    """Commit a durable outcome, receipt and archive under one transport lock."""
+                   authority_ids=None, now=None, mailbox='outbox', archive=True):
+    """Commit a durable outcome, receipt and archive under one transport lock.
+
+    ``archive=False`` фиксирует исход, НЕ вынося письмо из ящика. Так
+    обрабатывается чужая нить в общем ящике: письмо остаётся там, где его
+    ищет настоящий адресат, а мы помним, что уже его разобрали. Квитанция
+    по-прежнему пишется под тем же замком — теряется не она, а только право
+    трогать чужое письмо."""
     _mailbox(mailbox)
     allowed = {'replied', 'escalated', 'duplicate', 'superseded'}
     if disposition not in allowed:
@@ -459,7 +471,7 @@ def complete_claim(name, expected_sha256, token, *, disposition, outcome_ref,
         receipts = MAIL / 'receipts'
         receipts.mkdir(parents=True, exist_ok=True)
         receipt_name = hashlib.sha256(key.encode()).hexdigest()[:24] + '.json'
-        receipt_path = receipts / receipt_name
+        receipt_path = receipts / receipt_name   # локальный путь, не функция выше
         receipt = {'schema_version': 1, 'name': name, 'sha256': expected_sha256,
                    'source_mailbox': mailbox, 'actor': claim['actor'],
                    'state': 'outcome_durable', 'disposition': disposition,
@@ -468,6 +480,15 @@ def complete_claim(name, expected_sha256, token, *, disposition, outcome_ref,
                    'authority_ids': authority_ids, 'observed_at': claim['claimed_at'],
                    'completed_at': now}
         atomic_write(receipt_path, json.dumps(receipt, ensure_ascii=False, indent=2))
+        if not archive:
+            receipt['state'] = 'outcome_durable_in_place'
+            receipt['left_in_mailbox'] = True
+            atomic_write(receipt_path, json.dumps(receipt, ensure_ascii=False, indent=2))
+            claims.pop(key, None)
+            atomic_write(claims_path, json.dumps(claims, ensure_ascii=False, indent=2))
+            return {'name': name, 'mailbox': mailbox, 'archived': False,
+                    'disposition': disposition, 'receipt': str(receipt_path),
+                    'outcome_ref': outcome_ref}
         if source.exists():
             if target.exists():
                 raise ValueError('Archive filename collision; refusing to overwrite')
