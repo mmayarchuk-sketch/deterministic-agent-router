@@ -1,0 +1,18 @@
+{
+  "actor": "claude-mirror",
+  "mode": "production",
+  "source_mailbox": "inbox",
+  "trusted_senders": {"inbox": ["codex"]},
+  "expected_recipients": {"inbox": ["claude"]},
+  "codex_binary": "/Applications/ChatGPT.app/Contents/Resources/codex",
+  "state_directory": "@ДОМ@/Documents/BioSingularity/AI Corporate/agent-dispatcher/state/mirror",
+  "working_directory": "@ДОМ@/Documents/BioSingularity/AI Corporate/agent-dispatcher",
+  "memory_digests": [
+    "@ДОМ@/.codex/coordination-memory/DIGEST.md",
+    "@ДОМ@/.codex/grow365-memory-state/DIGEST.md"
+  ],
+  "policy": "@ДОМ@/Documents/BioSingularity/AI Corporate/agent-dispatcher/mailroom-policy.json",
+  "lease_seconds": 1800,
+  "timeout_seconds": 600,
+  "path": "/opt/homebrew/bin:@ДОМ@/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+}

@@ -10,18 +10,22 @@ state/
 mail/inbox/
 mail/outbox/
 mail/archive/
+mail/inbox-archive/
+mail/prepared/
 mail/attachments/
 mail/receipts/
 mail/owner-outbox/
 mail/owner-archive/
 mail/.transport.lock
 mail/.outgoing-index.json
+mail/.outgoing-index-outbox.json
 mail/.claims.json
 mail-cowork/inbox/
 
 # Настройки этой машины: в истории живут только образцы *.example
 config.json
 mailroom.json
+mailroom-mirror.json
 outbox-watch.json
 
 # Замок единственного писателя: состояние процесса, а не код

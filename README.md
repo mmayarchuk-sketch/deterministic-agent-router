@@ -190,12 +190,55 @@ interactive Astra task and implement that delivery state machine.
 writes a candidate under `state/mailroom/shadow-outcomes`, releases its claim,
 and does not write Inbox, owner-outbox, receipts, or Archive.
 
+## Inbox mirror (`source_mailbox: inbox`)
+
+The same bounded pass serves both directions. `mailroom.json` keeps the old
+path (`outbox`: letters written here, classified by Codex); a separate config
+built from `mailroom-mirror.json.example` runs the mirror, which reads `inbox`
+and answers into `outbox` — the mailbox it never reads. Consensus with Astra:
+letters `b079`/`b080` and `D-CODEX-0018`.
+
+What the mailbox parameter changes, and what it deliberately does not:
+
+| | `outbox` (unchanged) | `inbox` (new) |
+|---|---|---|
+| claim key | `name:sha` | `inbox:name:sha` |
+| receiver order channel | `outbox` | `inbox` |
+| archive | `mail/archive/` | `mail/inbox-archive/` |
+| receipt name | `sha256(key)[:24]` — unchanged | differs through the key |
+| request id | `mailroom-` + 24 hex — unchanged | `mirror-` + full SHA-256 |
+
+Old claims, receipts and archived letters stay readable without migration: the
+`outbox` key keeps its legacy shape, and a letter archived into the shared
+`mail/archive/` before 22.09.2026 is still recognised there — by content, not
+by name, because one name in that folder may belong to either mailbox.
+
+Every outcome is fenced before it is committed. `prepare_outcome` runs under
+the transport lock, refuses an expired or handed-over claim, creates the answer
+exactly once without overwriting, and on a retry verifies the stored answer by
+the full source key, its metadata and its content SHA before returning it. The
+stored answer wins over a freshly generated one, so a repeat finishes with the
+same outcome and does not call the model again. A mirror claim cannot be
+completed at all until such an outcome is fenced under it.
+
+Two automated passes do not answer each other: a letter whose id carries an
+automated prefix (`mailroom-`, `mirror-`) is recorded as read (`superseded`)
+and left unanswered. Sender and recipient are checked against a configured
+trusted mapping **before** the model is raised; the mirror refuses to run at
+all when that mapping is absent. Three partial failures are distinct
+exceptions — `ModelUnavailable`, `DeliveryFailed`, `CompletionFailed` — and in
+each the source letter survives, nothing is falsely reported as done, and the
+retry is safe.
+
+The mirror is **not scheduled** by this release, and the accumulated letters of
+the other branch are not to be processed with it without her knowledge.
+
 Run the local contract tests with:
 
 ```bash
 .venv/bin/python -m unittest -q \
   test_receiver_order.py test_mail_channel.py test_outbox_watch.py \
-  test_owner_watch.py test_mailroom.py
+  test_owner_watch.py test_mailroom.py test_mail_mirror.py
 ```
 
 Do not schedule `mailroom.py` until the shared lock is required for every
